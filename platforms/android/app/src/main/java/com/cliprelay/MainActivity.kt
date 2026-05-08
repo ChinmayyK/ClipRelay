@@ -1,7 +1,6 @@
 package com.cliprelay
 
 import android.Manifest
-import android.app.ActivityManager
 import android.app.AlertDialog
 import android.content.*
 import android.graphics.Typeface
@@ -345,10 +344,15 @@ class MainActivity : AppCompatActivity() {
             // Kind icon
             addView(TextView(this@MainActivity).apply {
                 text = when (entry.kind) {
-                    "text"  -> "📋"
-                    "image" -> "🖼️"
-                    "file"  -> "📎"
-                    else    -> "📋"
+                    ActivityKind.CLIPBOARD_TEXT -> "📋"
+                    ActivityKind.CLIPBOARD_IMAGE -> "🖼️"
+                    ActivityKind.FILE_RECEIVED,
+                    ActivityKind.FILE_SENT,
+                    ActivityKind.FILE_TRANSFER_INCOMING,
+                    ActivityKind.FILE_TRANSFER_PROGRESS,
+                    ActivityKind.FILE_TRANSFER_COMPLETE,
+                    ActivityKind.FILE_TRANSFER_FAILED -> "📎"
+                    else -> "📋"
                 }
                 textSize = 18f
                 layoutParams = LinearLayout.LayoutParams(dp(36), dp(36)).apply {
@@ -370,7 +374,7 @@ class MainActivity : AppCompatActivity() {
                     ellipsize = android.text.TextUtils.TruncateAt.END
                 })
 
-                if (entry.kind == "text" && entry.preview.isNotBlank()) {
+                if (entry.kind == ActivityKind.CLIPBOARD_TEXT && entry.preview.isNotBlank()) {
                     addView(TextView(this@MainActivity).apply {
                         text = "\"${entry.preview.take(60)}\""
                         textSize = 12f
@@ -404,8 +408,8 @@ class MainActivity : AppCompatActivity() {
     // ── Dashboard update ──────────────────────────────────────────────────────
 
     private fun updateDashboard() {
-        val running  = isServiceRunning()
         val prefs    = getSharedPreferences(ClipRelayService.PREFS_NAME, MODE_PRIVATE)
+        val running  = prefs.getBoolean(ClipRelayService.PREF_SERVICE_RUNNING, false)
         val myName   = prefs.getString("local_device_name", null)?.takeIf { it.isNotBlank() } ?: Build.MODEL
         val syncOn   = prefs.getBoolean("sync_enabled", true)
         val peers    = prefs.getStringSet("connected_names", emptySet())
@@ -443,13 +447,6 @@ class MainActivity : AppCompatActivity() {
         runCatching {
             startService(Intent(this, ClipRelayService::class.java).apply { this.action = action })
         }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun isServiceRunning(): Boolean {
-        val manager = getSystemService(ACTIVITY_SERVICE) as ActivityManager
-        return manager.getRunningServices(Int.MAX_VALUE)
-            .any { it.service.className == ClipRelayService::class.java.name }
     }
 
     private fun ensureNotificationPermission() {

@@ -33,7 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 // We keep this object name to match — only user-visible strings are renamed.
 
 object ClipRelayJni {
-    init { System.loadLibrary("proxiboard_core") }
+    init { System.loadLibrary("cliprelay_core") }
 
     // ── Event type constants ──────────────────────────────────────────────────
     const val CR_EVENT_NONE                  = 0
@@ -173,6 +173,7 @@ class ClipRelayService : Service() {
         const val ACTION_RESUME_SYNC        = "com.cliprelay.RESUME_SYNC"
         const val ACTION_DISCONNECT_ALL     = "com.cliprelay.DISCONNECT_ALL"
         const val ACTION_PUSH_TEXT          = "com.cliprelay.PUSH_TEXT"
+        const val ACTION_PUSH_SHARED_URI    = "com.cliprelay.PUSH_SHARED_URI"
         const val ACTION_STATUS_CHANGED     = "com.cliprelay.STATUS_CHANGED"
         const val ACTION_APPLY_CLIPBOARD    = "com.cliprelay.APPLY_CLIPBOARD"
         const val ACTION_ACCEPT_FILE_TRANSFER = "com.cliprelay.ACCEPT_FILE_TRANSFER"
@@ -182,6 +183,9 @@ class ClipRelayService : Service() {
         // Intent extras
         const val EXTRA_CLIPBOARD_TEXT      = "clipboard_text"
         const val EXTRA_TRANSFER_ID         = "transfer_id"
+        const val EXTRA_SHARED_URI          = "shared_uri"
+        const val EXTRA_SHARED_NAME         = "shared_name"
+        const val PREF_SERVICE_RUNNING      = "service_running"
 
         // Poll intervals
         private const val POLL_FULL_MS      = 20L    // 50 Hz — always-active mode
@@ -214,6 +218,7 @@ class ClipRelayService : Service() {
     private var suppressNext = false
     private val connectedPeerNames = linkedSetOf<String>()
     private val engineStarted = AtomicBoolean(false)
+    private val notificationManager by lazy { getSystemService(NotificationManager::class.java) }
 
     // WakeLock — held ONLY during active event drain, released immediately after.
     // NOT a permanent wakelock; the foreground service itself keeps us alive.
@@ -240,6 +245,7 @@ class ClipRelayService : Service() {
         super.onCreate()
         createNotificationChannels()
         acquireWakeLockIfNeeded()
+        setServiceRunning(true)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -287,6 +293,7 @@ class ClipRelayService : Service() {
         // Start / re-attach foreground
         return try {
             startForegroundCompat(buildForegroundNotification())
+            setServiceRunning(true)
 
             if (!engineStarted.getAndSet(true)) {
                 val deviceName = resolvedDeviceName()
@@ -295,6 +302,7 @@ class ClipRelayService : Service() {
 
                 if (engineHandle == 0L) {
                     Log.e(TAG, "Rust engine failed to start")
+                    setServiceRunning(false)
                     stopSelf()
                     return START_NOT_STICKY
                 }
@@ -313,9 +321,18 @@ class ClipRelayService : Service() {
                 }
             }
 
+            if (intent?.action == ACTION_PUSH_SHARED_URI) {
+                val rawUri = intent.getStringExtra(EXTRA_SHARED_URI)
+                val preferredName = intent.getStringExtra(EXTRA_SHARED_NAME)
+                if (!rawUri.isNullOrBlank() && isSyncEnabled() && engineHandle != 0L) {
+                    pushSharedUri(rawUri, preferredName)
+                }
+            }
+
             START_STICKY
         } catch (ex: Throwable) {
             Log.e(TAG, "onStartCommand failed", ex)
+            setServiceRunning(false)
             stopSelf()
             START_NOT_STICKY
         }
@@ -330,6 +347,7 @@ class ClipRelayService : Service() {
         engineStarted.set(false)
         connectedPeerNames.clear()
         releaseWakeLock()
+        setServiceRunning(false)
         persistStatus()
         super.onDestroy()
     }
@@ -630,7 +648,7 @@ class ClipRelayService : Service() {
             applyIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         val notif = NotificationCompat.Builder(this, CHAN_ALERTS)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Clipboard from $from")
             .setContentText(preview)
             .addAction(0, "Apply", applyPi)
@@ -660,7 +678,7 @@ class ClipRelayService : Service() {
             rejectIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
         val notif = NotificationCompat.Builder(this, CHAN_ALERTS)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("$from wants to send a file")
             .setContentText("$fileName ($sizeStr)")
             .addAction(0, "Accept", acceptPi)
@@ -672,7 +690,7 @@ class ClipRelayService : Service() {
 
     private fun updateFileTransferNotificationProgress(tid: String, fileName: String, percent: Int) {
         val notif = NotificationCompat.Builder(this, CHAN_ALERTS)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Receiving $fileName")
             .setContentText("$percent%")
             .setProgress(100, percent, false)
@@ -700,7 +718,7 @@ class ClipRelayService : Service() {
         }
 
         val builder = NotificationCompat.Builder(this, CHAN_ALERTS)
-            .setSmallIcon(R.drawable.ic_notification)
+            .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("File received from $from")
             .setContentText(fileName)
             .setAutoCancel(true)
@@ -774,6 +792,35 @@ class ClipRelayService : Service() {
         }
     }
 
+    private fun pushSharedUri(rawUri: String, preferredName: String?) {
+        val uri = runCatching { Uri.parse(rawUri) }.getOrNull() ?: return
+        when (val payload = readOutgoingUri(uri, preferredName)) {
+            null -> Log.w(TAG, "Ignored shared URI with unsupported payload: $uri")
+            is OutgoingPayload.Image -> {
+                ClipRelayJni.pushImage(engineHandle, payload.mime, payload.data)
+                addToFeed(
+                    ActivityEntry(
+                        deviceName = resolvedDeviceName(),
+                        kind = ActivityKind.CLIPBOARD_IMAGE,
+                        preview = preferredName ?: imageNameForMime(payload.mime)
+                    )
+                )
+                broadcastStatus()
+            }
+            is OutgoingPayload.File -> {
+                ClipRelayJni.pushFile(engineHandle, payload.name, payload.data)
+                addToFeed(
+                    ActivityEntry(
+                        deviceName = resolvedDeviceName(),
+                        kind = ActivityKind.FILE_SENT,
+                        preview = payload.name
+                    )
+                )
+                broadcastStatus()
+            }
+        }
+    }
+
     // ── Apply incoming clipboard ──────────────────────────────────────────────
 
     private fun applyText(text: String, from: String) {
@@ -784,7 +831,13 @@ class ClipRelayService : Service() {
         )
 
         // Silently add to activity feed — zero notification
-        addToFeed(ActivityEntry(deviceName = from, kind = "text", preview = text.take(100)))
+        addToFeed(
+            ActivityEntry(
+                deviceName = from,
+                kind = ActivityKind.CLIPBOARD_TEXT,
+                preview = text.take(100)
+            )
+        )
         broadcastStatus()
 
         // Respect user opt-in for clipboard copy notifications (default OFF)
@@ -810,7 +863,11 @@ class ClipRelayService : Service() {
             android.content.ClipData.newUri(contentResolver, file.name, uri)
         )
 
-        val kind = if (mime?.startsWith("image/") == true) "image" else "file"
+        val kind = if (mime?.startsWith("image/") == true) {
+            ActivityKind.CLIPBOARD_IMAGE
+        } else {
+            ActivityKind.FILE_RECEIVED
+        }
         addToFeed(ActivityEntry(deviceName = from, kind = kind, preview = file.name))
         broadcastStatus()
 
@@ -862,9 +919,12 @@ class ClipRelayService : Service() {
         return if (fallbackExt.isNullOrBlank()) "cliprelay-file" else "cliprelay-file.$fallbackExt"
     }
 
-    private fun readClipboardUri(uri: Uri): OutgoingPayload? = runCatching {
+    private fun readClipboardUri(uri: Uri): OutgoingPayload? = readOutgoingUri(uri, preferredName = null)
+
+    private fun readOutgoingUri(uri: Uri, preferredName: String?): OutgoingPayload? = runCatching {
         val mime = contentResolver.getType(uri).orEmpty()
         val name = run {
+            preferredName?.trim()?.takeIf { it.isNotEmpty() }?.let { return@run it }
             val cursor = contentResolver.query(
                 uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
             )
@@ -1097,5 +1157,11 @@ class ClipRelayService : Service() {
 
     private fun broadcastStatus() {
         sendBroadcast(Intent(ACTION_STATUS_CHANGED).setPackage(packageName))
+    }
+
+    private fun setServiceRunning(running: Boolean) {
+        prefs().edit()
+            .putBoolean(PREF_SERVICE_RUNNING, running)
+            .apply()
     }
 }

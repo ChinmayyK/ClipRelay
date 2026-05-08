@@ -191,6 +191,7 @@ fn compress_blocking(
 
     #[cfg(not(feature = "compress"))]
     {
+        let _ = strategy;
         // Pass-through: no compression without the feature flag.
         Ok((
             data.to_vec(),

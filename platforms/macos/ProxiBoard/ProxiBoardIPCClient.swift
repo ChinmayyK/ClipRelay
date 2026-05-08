@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import UniformTypeIdentifiers
 
 enum IPCClientError: LocalizedError {
     case daemonUnavailable
@@ -113,6 +114,20 @@ final class ClipRelayIPCClient {
             ],
             response: DispatchReportSnapshot.self
         )
+    }
+
+    func sendFile(url: URL, targetDeviceId: String?) async throws -> DispatchReportSnapshot {
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
+        var payload: [String: Any] = [
+            "cmd": "send_file",
+            "name": url.lastPathComponent,
+            "mime": mimeType(for: url),
+            "data_base64": data.base64EncodedString(),
+        ]
+        if let targetDeviceId {
+            payload["target_device"] = targetDeviceId
+        }
+        return try await send(payload: payload, response: DispatchReportSnapshot.self)
     }
 
     func peers() async throws -> [PeerSnapshot] {
@@ -299,6 +314,14 @@ final class ClipRelayIPCClient {
             throw IPCClientError.badResponse
         }
         return received.prefix(upTo: newlineIndex)
+    }
+
+    private func mimeType(for url: URL) -> String {
+        if let type = UTType(filenameExtension: url.pathExtension),
+           let mimeType = type.preferredMIMEType {
+            return mimeType
+        }
+        return "application/octet-stream"
     }
 
     static func defaultSocketPath() -> String {

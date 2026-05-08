@@ -137,6 +137,19 @@ final class ClipRelayStore: ObservableObject {
         }
     }
 
+    func sendFile(url: URL, to target: ManagedDevice? = nil) {
+        Task {
+            do {
+                _ = try await ipc.sendFile(url: url, targetDeviceId: target?.id)
+                let destination = target?.name ?? "all devices"
+                showToast(title: "File sent", body: "Shared with \(destination)", tint: .green)
+                refreshAll()
+            } catch {
+                showToast(title: "File send failed", body: error.localizedDescription, tint: .red)
+            }
+        }
+    }
+
     func pinTimelineItem(_ item: TimelineItem, pinned: Bool) {
         Task {
             do {

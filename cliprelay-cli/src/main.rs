@@ -87,6 +87,7 @@ async fn try_ipc(req: &IpcRequest) -> Option<IpcResponse> {
     }
     #[cfg(not(unix))]
     {
+        let _ = req;
         None
     }
 }

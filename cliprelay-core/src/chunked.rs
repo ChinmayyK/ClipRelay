@@ -1,16 +1,16 @@
 //! ClipRelay chunked file transfer — streaming, verified delivery.
 //!
 //! # Pipeline
-//! ```
+//! ```text
 //! Sender                              Receiver
-//! ──────                              ────────
-//! FileTransferAnnounce ──────────────► (user accepts / auto-accept small files)
-//!                      ◄────────────── FileTransferAccept { accepted: true }
-//! ChunkStart ──────────────────────►
-//! Chunk(0) ────────────────────────►
-//! Chunk(1) ────────────────────────►
+//! ------                              --------
+//! FileTransferAnnounce --------------> (user accepts / auto-accept small files)
+//!                      <-------------- FileTransferAccept { accepted: true }
+//! ChunkStart ------------------------>
+//! Chunk(0) -------------------------->
+//! Chunk(1) -------------------------->
 //! ...
-//! ChunkEnd ────────────────────────►  reassemble → SHA-256 verify → save
+//! ChunkEnd ------------------------->  reassemble -> SHA-256 verify -> save
 //! ```
 //!
 //! Each chunk frame is individually encrypted by the session AEAD layer.

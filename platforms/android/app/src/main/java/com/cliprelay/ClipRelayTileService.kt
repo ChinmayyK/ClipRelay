@@ -104,21 +104,53 @@ class ClipRelayShareTarget : android.app.Activity() {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
 
-        val text = when {
+        val sharedText = when {
             intent?.action == Intent.ACTION_SEND &&
-            intent.type?.startsWith("text/") == true ->
+                intent.type?.startsWith("text/") == true ->
                 intent.getStringExtra(Intent.EXTRA_TEXT)
             else -> null
         }
+        val sharedUri = when (intent?.action) {
+            Intent.ACTION_SEND -> {
+                if (intent.type?.startsWith("text/") == true) null
+                else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_STREAM)
+                }
+            }
+            Intent.ACTION_SEND_MULTIPLE -> {
+                val items = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM)
+                }
+                items?.firstOrNull()
+            }
+            else -> null
+        }
+        val sharedName = intent?.getStringExtra(Intent.EXTRA_TITLE)
 
-        if (text != null) {
+        if (!sharedText.isNullOrBlank()) {
             runCatching {
-                startService(Intent(this, ClipRelayService::class.java).apply {
+                ContextCompat.startForegroundService(this, Intent(this, ClipRelayService::class.java).apply {
                     action = ClipRelayService.ACTION_PUSH_TEXT
-                    putExtra("text", text)
+                    putExtra("text", sharedText)
                 })
             }
             Toast.makeText(this, "Pushed to ClipRelay peers", Toast.LENGTH_SHORT).show()
+        } else if (sharedUri != null) {
+            runCatching {
+                ContextCompat.startForegroundService(this, Intent(this, ClipRelayService::class.java).apply {
+                    action = ClipRelayService.ACTION_PUSH_SHARED_URI
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    putExtra(ClipRelayService.EXTRA_SHARED_URI, sharedUri.toString())
+                    putExtra(ClipRelayService.EXTRA_SHARED_NAME, sharedName)
+                })
+            }
+            Toast.makeText(this, "Shared with ClipRelay peers", Toast.LENGTH_SHORT).show()
         } else {
             Toast.makeText(this, "Nothing to push", Toast.LENGTH_SHORT).show()
         }

@@ -15,12 +15,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 CORE_DIR="${REPO_ROOT}/cliprelay-core"
 MACOS_DIR="${REPO_ROOT}/platforms/macos"
-APP_NAME="ProxiBoard"
+SOURCE_DIR_NAME="ProxiBoard"
+PRODUCT_NAME="ClipRelay"
 BUILD_TYPE="${1:---release}"
-APP_BUNDLE="${MACOS_DIR}/build/${APP_NAME}.app"
+APP_BUNDLE="${MACOS_DIR}/build/${PRODUCT_NAME}.app"
 TARGET_DIR="${REPO_ROOT}/target/release"
-ICON_SRC="${REPO_ROOT}/platforms/macos/ProxiBoard/Resources/AppIconSource.png"
-STATUS_ICON_SRC="${MACOS_DIR}/ProxiBoard/Resources/StatusBarSource.png"
+ICON_SRC="${REPO_ROOT}/platforms/macos/${SOURCE_DIR_NAME}/Resources/AppIconSource.png"
+STATUS_ICON_SRC="${MACOS_DIR}/${SOURCE_DIR_NAME}/Resources/StatusBarSource.png"
 
 log() { echo "▶ $*"; }
 
@@ -35,7 +36,7 @@ DAEMON_SRC="${TARGET_DIR}/cliprelay-daemon"
 
 # ── 2. Create .app bundle skeleton ───────────────────────────────────────────
 
-log "Creating ${APP_NAME}.app bundle..."
+log "Creating ${PRODUCT_NAME}.app bundle..."
 rm -rf "${APP_BUNDLE}"
 mkdir -p "${APP_BUNDLE}/Contents/"{MacOS,Frameworks,Resources}
 
@@ -54,15 +55,20 @@ install_name_tool \
 log "Compiling Swift sources..."
 SWIFT_FILES=()
 while IFS= read -r file; do
+    case "$(basename "${file}")" in
+        ActivityFeedView.swift|ClipRelayIPCClient.swift|ClipRelayModels.swift|ClipRelayStore.swift)
+            continue
+            ;;
+    esac
     SWIFT_FILES+=("${file}")
-done < <(find "${MACOS_DIR}/ProxiBoard" -name '*.swift' | sort)
+done < <(find "${MACOS_DIR}/${SOURCE_DIR_NAME}" -name '*.swift' | sort)
 
 SDK_PATH="$(xcrun --sdk macosx --show-sdk-path)"
 MACOS_TARGET="arm64-apple-macos13.0"
 
 swiftc \
     "${SWIFT_FILES[@]}" \
-    -import-objc-header "${MACOS_DIR}/ProxiBoard/ProxiBoardBridge.h" \
+    -import-objc-header "${MACOS_DIR}/${SOURCE_DIR_NAME}/ProxiBoardBridge.h" \
     -sdk "${SDK_PATH}" \
     -target "${MACOS_TARGET}" \
     -framework AppKit \
@@ -73,11 +79,11 @@ swiftc \
     -L "${APP_BUNDLE}/Contents/Frameworks" \
     -lcliprelay_core \
     -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
-    -o "${APP_BUNDLE}/Contents/MacOS/${APP_NAME}"
+    -o "${APP_BUNDLE}/Contents/MacOS/${PRODUCT_NAME}"
 
 # ── 4. Copy resources ─────────────────────────────────────────────────────────
 
-cp "${MACOS_DIR}/ProxiBoard/Info.plist" "${APP_BUNDLE}/Contents/Info.plist"
+cp "${MACOS_DIR}/${SOURCE_DIR_NAME}/Info.plist" "${APP_BUNDLE}/Contents/Info.plist"
 cp "${STATUS_ICON_SRC}" "${APP_BUNDLE}/Contents/Resources/StatusBarIcon.png"
 
 # Generate AppIcon.icns from the bundled source PNG.
@@ -104,7 +110,7 @@ codesign \
     --force \
     --deep \
     --sign "${IDENTITY}" \
-    --entitlements "${MACOS_DIR}/ProxiBoard/ProxiBoard.entitlements" \
+    --entitlements "${MACOS_DIR}/${SOURCE_DIR_NAME}/ProxiBoard.entitlements" \
     --options runtime \
     "${APP_BUNDLE}"
 

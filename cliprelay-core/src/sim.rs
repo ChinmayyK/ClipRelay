@@ -6,11 +6,19 @@
 //!
 //! # Usage
 //! ```rust
+//! use cliprelay_core::{sim::SimNetwork, ClipboardContent};
+//!
+//! # tokio::runtime::Builder::new_current_thread()
+//! #     .enable_all()
+//! #     .build()
+//! #     .unwrap()
+//! #     .block_on(async {
 //! let (mut alice, mut bob) = SimNetwork::pair("Alice", "Bob").await;
 //!
 //! alice.send_text("hello").await;
 //! let received = bob.next_clipboard().await;
-//! assert_eq!(received, ClipboardContent::Text("hello".into()));
+//! assert_eq!(received, Some(ClipboardContent::Text("hello".into())));
+//! # });
 //! ```
 
 use crate::crypto::EphemeralKeypair;

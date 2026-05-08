@@ -89,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupWindows() {
         dashboardController = Self.makeWindow(
             title: "ClipRelay",
-            size: NSSize(width: 1160, height: 780),
+            size: NSSize(width: 980, height: 680),
             rootView: DashboardRootView(store: store)
         )
         quickAccessController = Self.makePanel(
@@ -205,7 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showPanel(_ controller: NSWindowController?) {
         guard let window = controller?.window else { return }
         NSApp.activate(ignoringOtherApps: true)
-        window.center()
+        Self.fit(window: window)
         window.makeKeyAndOrderFront(nil)
     }
 
@@ -234,14 +234,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         size: NSSize,
         rootView: Content
     ) -> NSWindowController {
+        let fittedFrame = fittedFrame(for: size)
         let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: size),
+            contentRect: fittedFrame,
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = title
-        window.center()
+        window.minSize = NSSize(width: min(size.width, 720), height: min(size.height, 520))
         window.contentViewController = NSHostingController(rootView: rootView)
         return NSWindowController(window: window)
     }
@@ -251,8 +252,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         size: NSSize,
         rootView: Content
     ) -> NSWindowController {
+        let fittedFrame = fittedFrame(for: size)
         let panel = NSPanel(
-            contentRect: NSRect(origin: .zero, size: size),
+            contentRect: fittedFrame,
             styleMask: [.titled, .closable, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -263,5 +265,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.collectionBehavior = [.moveToActiveSpace]
         panel.contentViewController = NSHostingController(rootView: rootView)
         return NSWindowController(window: panel)
+    }
+
+    private static func fit(window: NSWindow) {
+        let requestedSize = window.frame.size
+        window.setFrame(fittedFrame(for: requestedSize), display: false)
+    }
+
+    private static func fittedFrame(for requestedSize: NSSize) -> NSRect {
+        let screen = NSScreen.main ?? NSScreen.screens.first
+        let visibleFrame = screen?.visibleFrame ?? NSRect(origin: .zero, size: requestedSize)
+        let horizontalMargin: CGFloat = 48
+        let verticalMargin: CGFloat = 48
+        let width = min(requestedSize.width, max(visibleFrame.width - horizontalMargin, 560))
+        let height = min(requestedSize.height, max(visibleFrame.height - verticalMargin, 420))
+        let origin = NSPoint(
+            x: visibleFrame.midX - (width / 2),
+            y: visibleFrame.midY - (height / 2)
+        )
+        return NSRect(origin: origin, size: NSSize(width: width, height: height))
     }
 }

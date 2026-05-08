@@ -361,7 +361,7 @@ class SettingsActivity : AppCompatActivity() {
                     text = "ClipRelay v0.2\n\nPrivate clipboard and file relay for devices on the same network. No cloud, no account, no telemetry."
                     textSize = 14f
                     setTextColor(color(R.color.pb_ink))
-                    lineSpacingMultiplier = 1.4f
+                    setLineSpacing(0f, 1.4f)
                 })
             })
 
