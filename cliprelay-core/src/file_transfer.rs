@@ -248,12 +248,8 @@ impl InboundTransfer {
             None
         };
         let eta_secs = speed_bps.and_then(|spd| {
-            if spd > 0 {
-                let remaining = self.meta.size_bytes.saturating_sub(self.bytes_received);
-                Some(remaining / spd)
-            } else {
-                None
-            }
+            let remaining = self.meta.size_bytes.saturating_sub(self.bytes_received);
+            remaining.checked_div(spd)
         });
 
         Ok(TransferProgress {
@@ -573,11 +569,16 @@ mod tests {
         mgr.accept_inbound(&tid).unwrap();
 
         let transfer = mgr.get_inbound_mut(&tid).unwrap();
-        // Feed corrupted chunk
-        transfer
-            .receive_chunk(0, b"CORRUPTED DATA".to_vec())
-            .unwrap();
-        transfer.receive_chunk(1, b"more data".to_vec()).unwrap();
+        // Feed corrupted chunk while keeping chunk count consistent.
+        for (chunk_idx, chunk) in data.chunks(FILE_CHUNK_SIZE).enumerate() {
+            let mut chunk_data = chunk.to_vec();
+            if chunk_idx == 0 && !chunk_data.is_empty() {
+                chunk_data[0] ^= 0xFF;
+            }
+            transfer
+                .receive_chunk(chunk_idx as u32, chunk_data)
+                .unwrap();
+        }
         // finalize should fail due to SHA-256 mismatch
         let result = transfer.finalize();
         assert!(result.is_err());

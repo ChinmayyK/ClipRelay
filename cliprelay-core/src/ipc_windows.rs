@@ -23,7 +23,7 @@ use tokio::net::windows::named_pipe::{PipeMode, ServerOptions};
 use tracing::{debug, info, warn};
 
 const PIPE_NAME: &str = r"\\.\pipe\cliprelay";
-const MAX_INSTANCES: u32 = 8;
+const MAX_INSTANCES: usize = 8;
 
 /// Spawn the Windows named-pipe IPC server.
 ///

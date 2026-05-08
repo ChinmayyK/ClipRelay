@@ -581,12 +581,13 @@ pub extern "system" fn Java_com_proxiboard_ClipRelayJni_applyClipboardByHash(
     if engine_ptr == 0 {
         return 0;
     }
-    let hash = {
+    let hash: String = {
         let jstr = unsafe { JString::from_raw(hash_jstr) };
-        match env.get_string(&jstr) {
-            Ok(s) => s.into(),
+        let s = match env.get_string(&jstr) {
+            Ok(s) => s,
             Err(_) => return 0,
-        }
+        };
+        s.into()
     };
     let engine_ref = unsafe { &*(engine_ptr as *const crate::engine::Engine) };
     let rt = tokio::runtime::Handle::current();
@@ -610,10 +611,11 @@ pub extern "system" fn Java_com_proxiboard_ClipRelayJni_acceptFileTransfer(
     }
     let hex_str: String = {
         let jstr = unsafe { JString::from_raw(transfer_id_hex) };
-        match env.get_string(&jstr) {
-            Ok(s) => s.into(),
+        let s = match env.get_string(&jstr) {
+            Ok(s) => s,
             Err(_) => return 0,
-        }
+        };
+        s.into()
     };
     let Ok(bytes) = hex::decode(&hex_str) else {
         return 0;
@@ -643,10 +645,11 @@ pub extern "system" fn Java_com_proxiboard_ClipRelayJni_rejectFileTransfer(
     }
     let hex_str: String = {
         let jstr = unsafe { JString::from_raw(transfer_id_hex) };
-        match env.get_string(&jstr) {
-            Ok(s) => s.into(),
+        let s = match env.get_string(&jstr) {
+            Ok(s) => s,
             Err(_) => return 0,
-        }
+        };
+        s.into()
     };
     let Ok(bytes) = hex::decode(&hex_str) else {
         return 0;
