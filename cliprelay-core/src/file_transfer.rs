@@ -31,7 +31,7 @@ use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 pub const FILE_CHUNK_SIZE: usize = 256 * 1024; // 256 KB per chunk
@@ -305,7 +305,7 @@ impl InboundTransfer {
 
     /// Should we send a chunk ack now?
     pub fn should_ack(&self) -> bool {
-        self.last_confirmed_chunk > 0 && self.last_confirmed_chunk % FILE_ACK_EVERY_N_CHUNKS == 0
+        self.last_confirmed_chunk > 0 && self.last_confirmed_chunk.is_multiple_of(FILE_ACK_EVERY_N_CHUNKS)
     }
 }
 
@@ -427,7 +427,7 @@ impl FileTransferManager {
         self.inbound.remove(tid)
     }
 
-    pub fn cancel_inbound(&mut self, tid: &TransferId, reason: &str) {
+    pub fn cancel_inbound(&mut self, tid: &TransferId, _reason: &str) {
         if let Some(t) = self.inbound.remove(tid) {
             // Clean up tmp file.
             if let Some(tmp) = t.tmp_path {
@@ -549,10 +549,8 @@ mod tests {
 
         // Feed chunks directly from the data slice.
         let transfer = mgr.get_inbound_mut(&tid).unwrap();
-        let mut chunk_idx = 0u32;
-        for chunk in data.chunks(FILE_CHUNK_SIZE) {
-            transfer.receive_chunk(chunk_idx, chunk.to_vec()).unwrap();
-            chunk_idx += 1;
+        for (chunk_idx, chunk) in data.chunks(FILE_CHUNK_SIZE).enumerate() {
+            transfer.receive_chunk(chunk_idx as u32, chunk.to_vec()).unwrap();
         }
         let dest = transfer.finalize().unwrap();
         let written = std::fs::read(&dest).unwrap();

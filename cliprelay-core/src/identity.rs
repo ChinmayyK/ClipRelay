@@ -39,7 +39,7 @@ use zeroize::Zeroize;
 /// A stable X25519 keypair representing this device's long-term identity.
 pub struct IdentityKey {
     secret_bytes: [u8; 32], // kept for serialization; never exposed publicly
-    secret: StaticSecret,
+    _secret: StaticSecret,
     pub public: PublicKey,
     pub public_bytes: [u8; 32],
 }
@@ -59,7 +59,7 @@ impl IdentityKey {
         let public_bytes = *public.as_bytes();
         Self {
             secret_bytes: bytes,
-            secret,
+            _secret: secret,
             public,
             public_bytes,
         }
@@ -68,7 +68,7 @@ impl IdentityKey {
     /// 32-byte SHA-256 fingerprint of the public key.
     pub fn fingerprint(&self) -> [u8; 32] {
         let mut h = Sha256::new();
-        h.update(&self.public_bytes);
+        h.update(self.public_bytes);
         h.finalize().into()
     }
 

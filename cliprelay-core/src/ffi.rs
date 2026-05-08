@@ -39,7 +39,7 @@ pub struct ClipRelayHandle {
 /// - `device_name`: UTF-8 C string; use NULL for auto-detected hostname.
 /// - `port`: 0 → use default port (47823).
 #[no_mangle]
-pub extern "C" fn cliprelay_start(device_name: *const c_char, port: u16) -> *mut ClipRelayHandle {
+pub unsafe extern "C" fn cliprelay_start(device_name: *const c_char, port: u16) -> *mut ClipRelayHandle {
     let name = if device_name.is_null() {
         whoami::devicename()
     } else {
@@ -173,7 +173,7 @@ pub struct PbEvent {
     inner: EngineEvent,
     // Cached C-string allocations for accessors.
     cached_str: Option<CString>,
-    cached_bytes: Option<Vec<u8>>,
+    _cached_bytes: Option<Vec<u8>>,
     cached_mime: Option<CString>,
     cached_name: Option<CString>,
     cached_path: Option<CString>,
@@ -193,7 +193,7 @@ pub unsafe extern "C" fn cliprelay_poll_event(handle: *mut ClipRelayHandle) -> *
         Ok(event) => Box::into_raw(Box::new(PbEvent {
             inner: event,
             cached_str: None,
-            cached_bytes: None,
+            _cached_bytes: None,
             cached_mime: None,
             cached_name: None,
             cached_path: None,

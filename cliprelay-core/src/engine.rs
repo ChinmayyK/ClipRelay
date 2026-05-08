@@ -1,5 +1,6 @@
 use crate::activity::ActivityFeed;
 use crate::dedup::hash_content;
+use std::path::Path;
 use crate::discovery::{Discovery, PeerEvent, PeerInfo};
 use crate::file_transfer::{default_save_dir, FileTransferManager, FileTransferMessage};
 use crate::identity::IdentityStore;
@@ -1392,6 +1393,7 @@ async fn observe_trust(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn register_session(
     shared: EngineShared,
     stream: TcpStream,
@@ -1893,7 +1895,7 @@ fn resolve_bind_address(
     Ok((snapshot.active_interface, snapshot.bind_addr))
 }
 
-fn ensure_parent(path: &PathBuf) -> Result<()> {
+fn ensure_parent(path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).with_context(|| format!("creating {:?}", parent))?;
     }

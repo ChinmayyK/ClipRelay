@@ -46,6 +46,7 @@ impl Backoff {
 
     /// Returns `Some(delay_to_sleep)` if another attempt should be made,
     /// `None` if the peer is considered unreachable for now.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Duration> {
         if self.attempts >= MAX_ATTEMPTS {
             debug!(

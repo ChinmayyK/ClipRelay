@@ -13,16 +13,13 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SyncMode {
+    #[default]
     Auto,
     Manual,
 }
 
-impl Default for SyncMode {
-    fn default() -> Self {
-        Self::Auto
-    }
-}
 
 // ── Settings struct ───────────────────────────────────────────────────────────
 

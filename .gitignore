@@ -1,7 +1,7 @@
 # Rust build artifacts
 target/
 **/*.rs.bk
-Cargo.lock   # libraries don't commit lock — binaries do
+# Cargo.lock is committed for this workspace to ensure reproducible CI builds
 
 # macOS
 .DS_Store

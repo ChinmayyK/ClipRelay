@@ -10,7 +10,7 @@
 //! - Internal IDs never appear in ClipboardReceived events
 
 use cliprelay_core::dedup::{hash_content, Deduplicator};
-use cliprelay_core::peer_manager::{DiscoverySource, PeerConnectionState, PeerManager};
+use cliprelay_core::peer_manager::{DiscoverySource, PeerManager};
 use cliprelay_core::protocol::ClipboardContent;
 use std::net::SocketAddr;
 use tempfile::NamedTempFile;

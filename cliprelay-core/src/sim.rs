@@ -13,7 +13,7 @@
 //! assert_eq!(received, ClipboardContent::Text("hello".into()));
 //! ```
 
-use crate::crypto::{EphemeralKeypair, SessionKey};
+use crate::crypto::EphemeralKeypair;
 use crate::dedup::{hash_content, Deduplicator};
 use crate::protocol::{AppMessage, ClipboardContent};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 // ── Simulated link (in-process channel pair) ──────────────────────────────────
 
-struct SimLink {
+struct _SimLink {
     tx: mpsc::Sender<AppMessage>,
     rx: mpsc::Receiver<AppMessage>,
 }
@@ -103,7 +103,7 @@ impl SimNode {
 
     pub async fn ping(&mut self) -> Option<Duration> {
         let ts = Instant::now();
-        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        let _seq = self.seq.fetch_add(1, Ordering::Relaxed);
         self.outbox
             .send(AppMessage::Ping {
                 timestamp_ms: ts.elapsed().as_millis() as u64,
@@ -130,8 +130,8 @@ impl SimNetwork {
         // ECDH handshake.
         let alice_ep = EphemeralKeypair::generate();
         let bob_ep = EphemeralKeypair::generate();
-        let alice_pub = alice_ep.public_bytes;
-        let bob_pub = bob_ep.public_bytes;
+        let _alice_pub = alice_ep.public_bytes;
+        let _bob_pub = bob_ep.public_bytes;
 
         // In a real session both nodes get the same session key.
         // For the sim we just need both to agree on a shared "bus".

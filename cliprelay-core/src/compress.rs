@@ -148,12 +148,12 @@ fn compress_blocking(
     // Without the feature, we return the original bytes unchanged.
     #[cfg(feature = "compress")]
     {
-        use image::{DynamicImage, ImageFormat};
+        use image::ImageFormat;
 
         let img = image::load_from_memory(data)?;
         let mut out = Vec::new();
 
-        let (final_mime, fmt) = match strategy {
+        let (final_mime, _fmt) = match strategy {
             CompressionStrategy::JpegLossy { quality } => {
                 let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality);
                 enc.encode_image(&img)?;

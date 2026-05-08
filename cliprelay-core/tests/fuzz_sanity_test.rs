@@ -28,6 +28,8 @@
 //! 5. **Trust store**: Feed arbitrary JSON to `TrustStore::load`.
 //!    Must return Ok or Err gracefully.
 
+#![allow(unexpected_cfgs)]
+
 // ── Fuzz target implementations ───────────────────────────────────────────────
 // These are compiled only under `cargo fuzz`, controlled by the feature flag.
 // Outside that context, this file serves as documentation and unit stubs.

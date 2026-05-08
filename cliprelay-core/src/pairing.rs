@@ -20,7 +20,7 @@
 //! - After pairing, the device's long-term fingerprint is stored in the
 //!   trust store exactly as in TOFU mode.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use hkdf::Hkdf;
 use sha2::Sha256;
 use std::time::{Duration, Instant};
@@ -118,9 +118,11 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use uuid::Uuid;
 
+type PendingPairingMap = HashMap<Uuid, (PendingPairing, oneshot::Sender<bool>)>;
+
 pub struct PairingManager {
     /// Pending pairings awaiting user decision. device_id → (pairing, decision_tx)
-    pending: Arc<Mutex<HashMap<Uuid, (PendingPairing, oneshot::Sender<bool>)>>>,
+    pending: Arc<Mutex<PendingPairingMap>>,
     /// Channel to notify UI of new pairing requests.
     ui_tx: mpsc::Sender<PairingRequest>,
 }

@@ -45,9 +45,9 @@ fn bench_encryption(c: &mut Criterion) {
             |b, payload| {
                 let alice = EphemeralKeypair::generate();
                 let bob = EphemeralKeypair::generate();
-                let a_pub = alice.public_bytes;
+                let _a_pub = alice.public_bytes;
                 let b_pub = bob.public_bytes;
-                let mut send = alice.derive_session_key(b_pub).unwrap();
+                let _send = alice.derive_session_key(b_pub).unwrap();
                 let alice2 = EphemeralKeypair::generate();
                 let bob2 = EphemeralKeypair::generate();
                 let a2_pub = alice2.public_bytes;
@@ -116,7 +116,7 @@ fn bench_dedup(c: &mut Criterion) {
         let mut dedup = Deduplicator::new();
         let content = ClipboardContent::Text("hello world".into());
         let hash = hash_content(&content);
-        b.iter(|| dedup.should_apply(black_box(hash)))
+        b.iter(|| dedup.should_apply(uuid::Uuid::new_v4(), black_box(hash)))
     });
 }
 

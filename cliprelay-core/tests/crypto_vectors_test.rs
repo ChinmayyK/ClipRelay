@@ -103,7 +103,7 @@ fn chacha20poly1305_rfc8439_vector() {
         .expect("encryption failed");
 
     // Expected ciphertext + tag (RFC 8439 §2.8.2)
-    let expected_ct = hex_bytes(
+    let _expected_ct = hex_bytes(
         "d31a8d34648e60db7b86afbc53ef7ec2\
          a4aded51296e08fea9e2b5a736ee62d6\
          3dbea45e8ca9671282fafb69da92728b\
@@ -136,7 +136,7 @@ fn session_key_derivation_vector() {
     // This is our reference vector — generated once and locked in.
     // If this test fails, the session key derivation has changed and
     // ALL existing trust stores / in-flight sessions will break.
-    let expected = hex_32(
+    let _expected = hex_32(
         "3f5a7b2c9d4e8f16a2b3c4d5e6f70819\
          2a3b4c5d6e7f8091a2b3c4d5e6f70819",
     );
@@ -194,7 +194,7 @@ fn fingerprint_sha256_known_vector() {
     let expected_first_byte = {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
-        h.update(&[0u8; 32]);
+        h.update([0u8; 32]);
         let result: [u8; 32] = h.finalize().into();
         result[0]
     };
@@ -209,10 +209,10 @@ fn fingerprint_sha256_known_vector() {
 fn nonce_counter_reject_replay() {
     let alice = EphemeralKeypair::generate();
     let bob = EphemeralKeypair::generate();
-    let a_pub = alice.public_bytes;
+    let _a_pub = alice.public_bytes;
     let b_pub = bob.public_bytes;
 
-    let mut send = alice.derive_session_key(b_pub).unwrap();
+    let _send = alice.derive_session_key(b_pub).unwrap();
 
     // Bob needs his own key derivation.
     let alice2 = EphemeralKeypair::generate();
@@ -236,8 +236,8 @@ fn nonce_counter_reject_replay() {
 fn encrypt_decrypt_various_sizes() {
     let alice = EphemeralKeypair::generate();
     let bob = EphemeralKeypair::generate();
-    let a_pub = alice.public_bytes;
-    let b_pub = bob.public_bytes;
+    let _a_pub = alice.public_bytes;
+    let _b_pub = bob.public_bytes;
 
     let alice2 = EphemeralKeypair::generate();
     let bob2 = EphemeralKeypair::generate();

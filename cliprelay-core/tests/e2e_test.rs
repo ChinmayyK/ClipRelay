@@ -4,7 +4,7 @@
 use cliprelay_core::{
     chunked::{maybe_chunk, Reassembler, CHUNK_THRESHOLD},
     dedup::{hash_content, Deduplicator},
-    filter::{ExtensionFilter, Filter, FilterChain, SizeFilter, TypeFilter, Verdict},
+    filter::{ExtensionFilter, FilterChain, SizeFilter, TypeFilter, Verdict},
     pairing::derive_pin,
     protocol::ClipboardContent,
     retry::{Backoff, MAX_ATTEMPTS},
@@ -226,7 +226,7 @@ fn dedup_prevents_echo_storm() {
     let new_content = ClipboardContent::Text("different content".into());
     let new_hash = hash_content(&new_content);
     assert!(
-        alice_dedup.should_apply(new_hash),
+        alice_dedup.should_apply(uuid::Uuid::new_v4(), new_hash),
         "new content should pass"
     );
 }
@@ -271,8 +271,8 @@ fn pin_commutative_ecdh() {
     let alice_pub = alice.public_bytes;
     let bob_pub = bob.public_bytes;
 
-    let alice_sess = alice.derive_session_key(bob_pub).unwrap();
-    let bob_sess = bob.derive_session_key(alice_pub).unwrap();
+    let _alice_sess = alice.derive_session_key(bob_pub).unwrap();
+    let _bob_sess = bob.derive_session_key(alice_pub).unwrap();
 
     // We can't read the session key directly, but we can verify that both
     // sides encrypt/decrypt successfully (commutativity guarantee).

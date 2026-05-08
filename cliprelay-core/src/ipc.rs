@@ -9,7 +9,7 @@
 //!
 //! # Transport
 //! - Linux / macOS: Unix domain socket at `$XDG_RUNTIME_DIR/cliprelay.sock`
-//!                  (or `/tmp/cliprelay-<uid>.sock` as fallback)
+//!   (or `/tmp/cliprelay-<uid>.sock` as fallback)
 //! - Windows: named pipe `\\.\pipe\cliprelay`
 //!
 //! # Protocol

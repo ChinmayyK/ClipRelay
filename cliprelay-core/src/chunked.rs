@@ -62,7 +62,7 @@ pub fn maybe_chunk(content: &ClipboardContent) -> Option<Vec<ChunkMessage>> {
 
     let chunks: Vec<Bytes> = raw
         .chunks(CHUNK_SIZE)
-        .map(|c| Bytes::copy_from_slice(c))
+        .map(Bytes::copy_from_slice)
         .collect();
     let total_chunks = chunks.len() as u32;
     let total_bytes = raw.len() as u64;
@@ -307,11 +307,8 @@ mod tests {
         let mut r = Reassembler::default();
         let mut corrupted = false;
         for msg in msgs {
-            match r.feed(msg).unwrap() {
-                Some(ReassemblerOutput::ChecksumMismatch { .. }) => {
-                    corrupted = true;
-                }
-                _ => {}
+            if let Some(ReassemblerOutput::ChecksumMismatch { .. }) = r.feed(msg).unwrap() {
+                corrupted = true;
             }
         }
         assert!(corrupted, "should detect corruption via SHA-256");

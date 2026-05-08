@@ -41,6 +41,7 @@ tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1"
 if-addrs = "0.13"
 libc = "0.2"
+image = { version = "0.24", optional = true }
 
 # Logging
 tracing = "0.1"
@@ -79,3 +80,6 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+[features]
+compress = ["image"]
