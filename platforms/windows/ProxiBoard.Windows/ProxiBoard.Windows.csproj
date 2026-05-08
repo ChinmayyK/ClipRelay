@@ -15,7 +15,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Native Rust DLL: built by `cargo build --release` -->
+    <!-- Native Rust DLL built by cargo build (release) -->
     <None Include="..\..\..\cliprelay-core\target\release\cliprelay_core.dll">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>

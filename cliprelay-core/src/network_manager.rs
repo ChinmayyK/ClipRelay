@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+#[cfg(not(target_os = "android"))]
 use if_addrs::{get_if_addrs, IfAddr};
 use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
@@ -34,6 +35,7 @@ pub struct NetworkChangeEvent {
     pub kinds: Vec<NetworkChangeKind>,
 }
 
+#[cfg(not(target_os = "android"))]
 pub fn list_interfaces() -> Result<Vec<NetworkInterfaceInfo>> {
     let primary_ip = detect_primary_outbound_ip().ok();
     let mut interfaces = Vec::new();
@@ -49,6 +51,22 @@ pub fn list_interfaces() -> Result<Vec<NetworkInterfaceInfo>> {
             name: iface.name,
             ip,
             is_primary: Some(ip) == primary_ip,
+        });
+    }
+
+    Ok(interfaces)
+}
+
+#[cfg(target_os = "android")]
+pub fn list_interfaces() -> Result<Vec<NetworkInterfaceInfo>> {
+    let primary_ip = detect_primary_outbound_ip().ok();
+    let mut interfaces = Vec::new();
+
+    if let Some(ip) = primary_ip {
+        interfaces.push(NetworkInterfaceInfo {
+            name: "primary".to_string(),
+            ip,
+            is_primary: true,
         });
     }
 

@@ -39,7 +39,6 @@ mdns-sd = "0.10"
 # Networking
 tokio-util = { version = "0.7", features = ["codec"] }
 bytes = "1"
-if-addrs = "0.13"
 libc = "0.2"
 image = { version = "0.24", optional = true }
 
@@ -59,6 +58,9 @@ dirs = "5"
 # Error handling
 thiserror = "1"
 anyhow = "1"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+if-addrs = "0.13"
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"

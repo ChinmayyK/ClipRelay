@@ -42,30 +42,27 @@ fn hkdf_sha256_rfc5869_test_case_1() {
 
 #[test]
 fn x25519_rfc7748_test_vector() {
-    use x25519_dalek::{PublicKey, StaticSecret};
+    use x25519_dalek::x25519;
 
-    // Alice's private scalar (little-endian)
-    let alice_private_bytes: [u8; 32] = hex_32(
-        "77076d0a7318a57d3c16c17251b26645\
-         c6c2f6ca26248490f00d1a1edfa0c028",
-    );
-    // Bob's public key (u-coordinate)
-    let bob_public_bytes: [u8; 32] = hex_32(
-        "de9edb7d7b7dc1b4d35b61c2ece43537\
-         3f8343c85b78674dadfc7e146f882b4f",
-    );
+    // RFC 7748 ladder test vector (set 1).
+    let input_scalar: [u8; 32] = [
+        0xa5, 0x46, 0xe3, 0x6b, 0xf0, 0x52, 0x7c, 0x9d, 0x3b, 0x16, 0x15, 0x4b, 0x82, 0x46,
+        0x5e, 0xdd, 0x62, 0x14, 0x4c, 0x0a, 0xc1, 0xfc, 0x5a, 0x18, 0x50, 0x6a, 0x22, 0x44,
+        0xba, 0x44, 0x9a, 0xc4,
+    ];
+    let input_point: [u8; 32] = [
+        0xe6, 0xdb, 0x68, 0x67, 0x58, 0x30, 0x30, 0xdb, 0x35, 0x94, 0xc1, 0xa4, 0x24, 0xb1,
+        0x5f, 0x7c, 0x72, 0x66, 0x24, 0xec, 0x26, 0xb3, 0x35, 0x3b, 0x10, 0xa9, 0x03, 0xa6,
+        0xd0, 0xab, 0x1c, 0x4c,
+    ];
+    let expected: [u8; 32] = [
+        0xc3, 0xda, 0x55, 0x37, 0x9d, 0xe9, 0xc6, 0x90, 0x8e, 0x94, 0xea, 0x4d, 0xf2, 0x8d,
+        0x08, 0x4f, 0x32, 0xec, 0xcf, 0x03, 0x49, 0x1c, 0x71, 0xf7, 0x54, 0xb4, 0x07, 0x55,
+        0x77, 0xa2, 0x85, 0x52,
+    ];
 
-    let alice_secret = StaticSecret::from(alice_private_bytes);
-    let bob_public = PublicKey::from(bob_public_bytes);
-    let shared = alice_secret.diffie_hellman(&bob_public);
-
-    // Expected shared secret from RFC 7748 §6.1
-    let expected: [u8; 32] = hex_32(
-        "4a5d9d5ba4ce2de1728e3bf480350f25\
-         e07e21c947d19e3376f09b3c1e161742",
-    );
-
-    assert_eq!(shared.as_bytes(), &expected, "X25519 vector mismatch");
+    let shared = x25519(input_scalar, input_point);
+    assert_eq!(shared, expected, "X25519 vector mismatch");
 }
 
 // ── ChaCha20-Poly1305 test vector (RFC 8439 §2.8.2) ──────────────────────────

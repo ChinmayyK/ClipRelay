@@ -16,7 +16,7 @@
 //! Plain JSON request → JSON response (newline-delimited), both directions.
 //! No authentication needed — socket is mode 0600, only the owning user.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -171,6 +171,7 @@ pub fn socket_path() -> PathBuf {
 
 #[cfg(unix)]
 pub mod server {
+    use anyhow::Context;
     use super::*;
     use std::sync::Arc;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -247,6 +248,7 @@ pub mod server {
 
 #[cfg(unix)]
 pub mod client {
+    use anyhow::Context;
     use super::*;
     use std::time::Duration;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
