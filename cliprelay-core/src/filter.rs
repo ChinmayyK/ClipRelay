@@ -249,12 +249,15 @@ impl Default for SensitiveTextFilter {
         Self {
             enabled: false,
             patterns: vec![
+                // PEM-encoded private keys
                 "BEGIN RSA PRIVATE KEY",
                 "BEGIN OPENSSH PRIVATE KEY",
                 "BEGIN EC PRIVATE KEY",
+                "BEGIN DSA PRIVATE KEY",
                 "BEGIN PGP PRIVATE KEY BLOCK",
+                "BEGIN ENCRYPTED PRIVATE KEY",
                 "-----BEGIN CERTIFICATE-----",
-                // Common password manager patterns
+                // Generic credential labels
                 "password:",
                 "passwd:",
                 "secret:",
@@ -262,12 +265,54 @@ impl Default for SensitiveTextFilter {
                 "api-key:",
                 "apikey:",
                 "access_token:",
+                "refresh_token:",
+                "id_token:",
                 "private_key:",
+                "client_secret:",
                 "bearer ",
+                // AWS
                 "aws_secret_access_key",
+                "aws_session_token",
+                "AKIA", // AWS access key ID prefix
+                // GCP
+                "\"type\": \"service_account\"",
+                "\"private_key_id\":",
+                // GitHub
                 "github_pat_",
+                "ghp_",   // classic PAT
+                "gho_",   // OAuth token
+                "ghs_",   // Actions token
+                "ghr_",   // refresh token
+                // Slack
                 "xoxb-",
                 "xoxp-",
+                "xoxa-",
+                "xoxs-",
+                // Stripe
+                "sk_live_",
+                "sk_test_",
+                "rk_live_",
+                // Twilio
+                "SKXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+                "AC[0-9a-f]{32}",
+                // Shopify
+                "shppa_",
+                "shpat_",
+                // Discord
+                "discord.com/api/webhooks",
+                // Database connection strings
+                "postgres://",
+                "postgresql://",
+                "mysql://",
+                "mongodb+srv://",
+                // Generic JWT header (base64 eyJ = {"alg" prefix)
+                "eyJhbGci",
+                // Terraform / env file patterns
+                "TF_VAR_",
+                "SECRET=",
+                "TOKEN=",
+                "APIKEY=",
+                "PRIVATE_KEY=",
             ],
         }
     }
@@ -281,14 +326,45 @@ impl SensitiveTextFilter {
         }
     }
 
+    /// Shannon entropy of the string (bits per character).
+    /// High-entropy single-line strings are likely tokens or hashes.
+    fn shannon_entropy(text: &str) -> f64 {
+        if text.is_empty() {
+            return 0.0;
+        }
+        let len = text.len() as f64;
+        let mut freq = [0u32; 256];
+        for byte in text.bytes() {
+            freq[byte as usize] += 1;
+        }
+        freq.iter()
+            .filter(|&&c| c > 0)
+            .map(|&c| {
+                let p = c as f64 / len;
+                -p * p.log2()
+            })
+            .sum()
+    }
+
+    /// Returns true if text looks like a raw secret/token.
+    ///
+    /// Heuristics (all must pass):
+    /// - Single line, no whitespace
+    /// - Length ≥ 20 characters
+    /// - Mix of alpha + digit + punctuation (excludes prose sentences)
+    /// - Shannon entropy ≥ 3.5 bits/char (tokens are near-random)
     fn looks_like_secret(text: &str) -> bool {
         let trimmed = text.trim();
-        if trimmed.is_empty() || trimmed.len() < 12 {
+        if trimmed.is_empty() || trimmed.len() < 20 {
             return false;
         }
 
         let single_line = !trimmed.contains('\n');
         let has_space = trimmed.contains(char::is_whitespace);
+        if !single_line || has_space {
+            return false;
+        }
+
         let alpha = trimmed.chars().filter(|c| c.is_ascii_alphabetic()).count();
         let digit = trimmed.chars().filter(|c| c.is_ascii_digit()).count();
         let punct = trimmed
@@ -296,7 +372,13 @@ impl SensitiveTextFilter {
             .filter(|c| c.is_ascii_punctuation() && *c != '_' && *c != '-')
             .count();
 
-        single_line && !has_space && trimmed.len() >= 20 && alpha >= 4 && digit >= 2 && punct >= 1
+        // Must look token-like (has letters, digits, and/or punctuation).
+        if alpha < 4 || (digit == 0 && punct == 0) {
+            return false;
+        }
+
+        // Entropy gate: genuine secrets are high-entropy; English sentences aren't.
+        Self::shannon_entropy(trimmed) >= 3.5
     }
 }
 
@@ -322,7 +404,9 @@ impl Filter for SensitiveTextFilter {
             }
 
             if Self::looks_like_secret(text) {
-                return Verdict::deny("text looks like a secret/token and smart sync blocked it");
+                return Verdict::deny(
+                    "text looks like a high-entropy secret/token (disable block_sensitive_text to override)"
+                );
             }
         }
         Verdict::Allow
@@ -420,6 +504,41 @@ mod tests {
         };
         let key = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAK...";
         assert!(matches!(f.check(&text(key)), Verdict::Deny { .. }));
+    }
+
+    #[test]
+    fn sensitive_text_blocks_stripe_key() {
+        let f = SensitiveTextFilter { enabled: true, ..Default::default() };
+        assert!(matches!(f.check(&text("sk_live_EXAMPLE_KEY_FOR_TESTING_12345")), Verdict::Deny { .. }));
+        assert!(matches!(f.check(&text("sk_test_EXAMPLE_KEY_FOR_TESTING_12345")), Verdict::Deny { .. }));
+    }
+
+    #[test]
+    fn sensitive_text_blocks_github_pat() {
+        let f = SensitiveTextFilter { enabled: true, ..Default::default() };
+        assert!(matches!(f.check(&text("ghp_EXAMPLE_GITHUB_PAT_FOR_TESTING_123456789")), Verdict::Deny { .. }));
+    }
+
+    #[test]
+    fn sensitive_text_blocks_high_entropy_token() {
+        let f = SensitiveTextFilter { enabled: true, ..Default::default() };
+        // 40-char hex string like a Git SHA or random token — high entropy, no spaces.
+        let token = "a3f9c2e1b4d7e0f5c8a2b9d1e6f3c0a7b4e2d9f1";
+        assert!(matches!(f.check(&text(token)), Verdict::Deny { .. }));
+    }
+
+    #[test]
+    fn sensitive_text_allows_normal_prose() {
+        let f = SensitiveTextFilter { enabled: true, ..Default::default() };
+        assert_eq!(f.check(&text("The quick brown fox jumps over the lazy dog")), Verdict::Allow);
+        assert_eq!(f.check(&text("Meeting at 3pm in conference room B")), Verdict::Allow);
+    }
+
+    #[test]
+    fn sensitive_text_blocks_jwt() {
+        let f = SensitiveTextFilter { enabled: true, ..Default::default() };
+        let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+        assert!(matches!(f.check(&text(jwt)), Verdict::Deny { .. }));
     }
 
     #[test]

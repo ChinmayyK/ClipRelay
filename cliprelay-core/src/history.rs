@@ -172,6 +172,15 @@ fn format_preview(text: &str, preview_len: usize) -> String {
     }
 }
 
+/// Escape a field value for CSV (wraps in quotes if it contains commas, quotes, or newlines).
+fn csv_escape(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
 pub struct History {
     entries: VecDeque<HistoryEntry>,
     path: PathBuf,
@@ -323,11 +332,89 @@ impl History {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent).context("creating history dir")?;
         }
+        // Atomic write: serialise to a .tmp file then rename so a crash during
+        // write never leaves the history file in a partially-written state.
+        let tmp_path = self.path.with_extension("tmp");
         let bytes = serde_json::to_vec_pretty(
             &self.entries.iter().cloned().collect::<Vec<HistoryEntry>>(),
         )?;
-        std::fs::write(&self.path, bytes).context("writing history")?;
+        std::fs::write(&tmp_path, &bytes).context("writing history tmp")?;
+        std::fs::rename(&tmp_path, &self.path).context("renaming history file")?;
         Ok(())
+    }
+
+    /// Full-text search through stored history.
+    ///
+    /// Searches:
+    /// - `source_device` (case-insensitive substring)
+    /// - `kind` (exact match: "text", "image", "file")
+    /// - Summary text (first line preview)
+    /// - Full stored text for `Text` entries (if `full_text` is available)
+    pub fn search_fulltext<'a>(&'a self, query: &'a str) -> impl Iterator<Item = &'a HistoryEntry> {
+        let q = query.to_lowercase();
+        self.entries.iter().rev().filter(move |entry| {
+            if entry.source_device.to_lowercase().contains(&q) {
+                return true;
+            }
+            if entry.kind().contains(q.as_str()) {
+                return true;
+            }
+            if entry.summary().to_lowercase().contains(&q) {
+                return true;
+            }
+            // Also check the stored full text for text entries.
+            if let HistoryPayload::Text { full_text: Some(ref text), .. } = entry.payload {
+                if text.to_lowercase().contains(&q) {
+                    return true;
+                }
+            }
+            false
+        })
+    }
+
+    /// Return entries newer than `since_id` (exclusive), most-recent first.
+    ///
+    /// Useful for incremental UI updates: call with the last-seen entry ID to
+    /// fetch only new arrivals without re-sending the entire history.
+    pub fn recent_since(&self, since_id: u64) -> impl Iterator<Item = &HistoryEntry> {
+        self.entries
+            .iter()
+            .rev()
+            .take_while(move |entry| entry.id > since_id)
+    }
+
+    /// Export history as CSV text.
+    ///
+    /// Columns: `id,timestamp,source_device,kind,bytes,preview`
+    ///
+    /// The `preview` column is double-quote-escaped and newlines are replaced
+    /// with `\n` so the output is always single-line per entry.
+    pub fn export_csv(&self) -> String {
+        let mut out = String::from("id,timestamp,source_device,kind,bytes,preview\n");
+        for entry in self.entries.iter().rev() {
+            let bytes_str = match &entry.payload {
+                HistoryPayload::Text { full_len, .. } => full_len.to_string(),
+                HistoryPayload::Image { bytes, .. } => bytes.to_string(),
+                HistoryPayload::File { bytes, .. } => bytes.to_string(),
+                HistoryPayload::Metadata { bytes, .. } => bytes.to_string(),
+            };
+            // Escape the preview: double quotes become "", newlines become ↵.
+            let preview = entry
+                .summary()
+                .replace('"', "\"\"")
+                .replace('\n', "↵")
+                .replace('\r', "");
+            out.push_str(&format!(
+                "{},{},{},{},{},\"{}\"\n",
+                entry.id,
+                entry.timestamp,
+                csv_escape(&entry.source_device),
+                entry.kind(),
+                bytes_str,
+                preview,
+            ));
+        }
+        out
     }
 }
 
@@ -430,4 +517,85 @@ mod tests {
         assert_eq!(entry.hash, hash);
         assert!(matches!(entry.payload, HistoryPayload::Text { .. }));
     }
-}
+
+    #[test]
+    fn fulltext_search_finds_stored_text() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        history
+            .push_with_options(
+                &ClipboardContent::Text("unique-needle-42".into()),
+                "DevA".into(),
+                1024,
+            )
+            .unwrap();
+        history
+            .push_with_options(
+                &ClipboardContent::Text("totally unrelated".into()),
+                "DevB".into(),
+                1024,
+            )
+            .unwrap();
+
+        let results: Vec<_> = history.search_fulltext("unique-needle").collect();
+        assert_eq!(results.len(), 1, "should find exactly the one entry");
+        assert!(results[0].source_device == "DevA");
+    }
+
+    #[test]
+    fn search_by_device_name() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("a".into()), "iPhone".into(), 1024)
+            .unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("b".into()), "MacBook".into(), 1024)
+            .unwrap();
+
+        let results: Vec<_> = history.search_fulltext("iphone").collect();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn recent_since_returns_only_newer_entries() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        for i in 0..5 {
+            history
+                .push_with_options(
+                    &ClipboardContent::Text(format!("item {i}")),
+                    "local".into(),
+                    1024,
+                )
+                .unwrap();
+        }
+
+        // Snapshot the id of the 3rd entry.
+        let anchor_id = history.entries().iter().nth(2).unwrap().id;
+        let newer: Vec<_> = history.recent_since(anchor_id).collect();
+        // Only entries with id > anchor_id should appear.
+        assert!(newer.iter().all(|e| e.id > anchor_id));
+        assert_eq!(newer.len(), 2); // entries 4 and 5
+    }
+
+    #[test]
+    fn export_csv_produces_valid_rows() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        history
+            .push_with_options(
+                &ClipboardContent::Text("hello, world".into()),
+                "MyDevice".into(),
+                1024,
+            )
+            .unwrap();
+
+        let csv = history.export_csv();
+        let lines: Vec<&str> = csv.lines().collect();
+        // Header + 1 data row.
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("id,timestamp,source_device"));
+        // Commas inside text should be quoted in the preview column.
+        assert!(lines[1].contains("text"));
+    }

@@ -64,6 +64,35 @@ impl PeerWindow {
     }
 }
 
+/// Diagnostic counters for the deduplicator.
+///
+/// Useful for metrics dashboards and debugging noisy mesh behaviour.
+#[derive(Debug, Clone, Default)]
+pub struct DedupStats {
+    /// Times a local send was allowed through.
+    pub sends_allowed: u64,
+    /// Times a local send was suppressed (content just received — echo guard).
+    pub sends_suppressed: u64,
+    /// Times an incoming payload was applied to the local clipboard.
+    pub applies_allowed: u64,
+    /// Times an incoming payload was dropped as an echo of our own send.
+    pub echo_suppressed: u64,
+    /// Times an incoming payload was dropped as a duplicate from a second peer.
+    pub cross_peer_duplicates: u64,
+    /// Times an incoming payload was dropped inside the per-peer dedup window.
+    pub windowed_duplicates: u64,
+}
+
+impl DedupStats {
+    /// Total suppressed (all categories).
+    pub fn total_suppressed(&self) -> u64 {
+        self.sends_suppressed
+            + self.echo_suppressed
+            + self.cross_peer_duplicates
+            + self.windowed_duplicates
+    }
+}
+
 /// Mesh-aware deduplicator.
 ///
 /// Tracks:
@@ -79,6 +108,8 @@ pub struct Deduplicator {
     last_applied: Option<ContentHash>,
     /// Sent hash expiry — clear after this long to allow re-send.
     sent_at: HashMap<ContentHash, Instant>,
+    /// Running statistics.
+    stats: DedupStats,
 }
 
 const SENT_HASH_TTL: Duration = Duration::from_secs(10);
@@ -90,6 +121,7 @@ impl Deduplicator {
             peer_windows: HashMap::new(),
             last_applied: None,
             sent_at: HashMap::new(),
+            stats: DedupStats::default(),
         }
     }
 
@@ -112,10 +144,13 @@ impl Deduplicator {
     pub fn should_send(&mut self, hash: ContentHash) -> bool {
         self.evict_stale_sent();
         if self.last_applied == Some(hash) {
-            return false; // just received this — don't bounce back
+            // Content was just received — don't bounce back.
+            self.stats.sends_suppressed += 1;
+            return false;
         }
         self.sent_hashes.insert(hash);
         self.sent_at.insert(hash, Instant::now());
+        self.stats.sends_allowed += 1;
         true
     }
 
@@ -124,27 +159,36 @@ impl Deduplicator {
     pub fn should_apply(&mut self, from_peer: Uuid, hash: ContentHash) -> bool {
         self.evict_stale_sent();
 
-        // Echo: we sent this, it's bouncing back
+        // Echo: we sent this, it's bouncing back.
         if self.sent_hashes.contains(&hash) {
+            self.stats.echo_suppressed += 1;
             return false;
         }
 
-        // Already applied (duplicate from two peers simultaneously)
+        // Already applied (duplicate from two peers simultaneously).
         if self.last_applied == Some(hash) {
+            self.stats.cross_peer_duplicates += 1;
             return false;
         }
 
-        // Per-peer duplicate within the dedup window
+        // Per-peer duplicate within the dedup window.
         let window = self
             .peer_windows
             .entry(from_peer)
             .or_insert_with(PeerWindow::new);
         if window.seen_recently(hash) {
+            self.stats.windowed_duplicates += 1;
             return false;
         }
 
         self.last_applied = Some(hash);
+        self.stats.applies_allowed += 1;
         true
+    }
+
+    /// Snapshot of deduplication statistics since the last `reset()`.
+    pub fn stats(&self) -> &DedupStats {
+        &self.stats
     }
 
     pub fn remove_peer(&mut self, peer_id: Uuid) {
@@ -155,6 +199,7 @@ impl Deduplicator {
         self.sent_hashes.clear();
         self.sent_at.clear();
         self.last_applied = None;
+        self.stats = DedupStats::default();
     }
 }
 
@@ -292,4 +337,45 @@ mod tests {
         assert!(!rl.check(id));
         assert_eq!(rl.violation_count(id), 1);
     }
-}
+
+    #[test]
+    fn stats_track_echo_suppression() {
+        let mut dedup = Deduplicator::new();
+        let content = ClipboardContent::Text("hello".into());
+        let hash = hash_content(&content);
+        let peer = Uuid::new_v4();
+
+        assert!(dedup.should_send(hash));
+        assert!(!dedup.should_apply(peer, hash)); // echo
+
+        let stats = dedup.stats();
+        assert_eq!(stats.sends_allowed, 1);
+        assert_eq!(stats.echo_suppressed, 1);
+        assert_eq!(stats.applies_allowed, 0);
+    }
+
+    #[test]
+    fn stats_track_cross_peer_duplicate() {
+        let mut dedup = Deduplicator::new();
+        let hash = hash_content(&ClipboardContent::Text("same".into()));
+        let peer_a = Uuid::new_v4();
+        let peer_b = Uuid::new_v4();
+
+        assert!(dedup.should_apply(peer_a, hash));
+        assert!(!dedup.should_apply(peer_b, hash));
+
+        let stats = dedup.stats();
+        assert_eq!(stats.applies_allowed, 1);
+        assert_eq!(stats.cross_peer_duplicates, 1);
+    }
+
+    #[test]
+    fn stats_reset_on_reset() {
+        let mut dedup = Deduplicator::new();
+        let hash = hash_content(&ClipboardContent::Text("x".into()));
+        dedup.should_send(hash);
+        assert_eq!(dedup.stats().sends_allowed, 1);
+        dedup.reset();
+        assert_eq!(dedup.stats().sends_allowed, 0);
+        assert_eq!(dedup.stats().total_suppressed(), 0);
+    }

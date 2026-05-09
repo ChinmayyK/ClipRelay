@@ -174,7 +174,74 @@ impl Settings {
     pub fn effective_history_limit(&self) -> usize {
         self.history_limit.clamp(20, 100)
     }
+
+    /// Clamp all numeric fields to sane ranges, returning a sanitized clone.
+    ///
+    /// Call after loading from disk to guard against hand-edited files with
+    /// extreme values (e.g. `clipboard_poll_ms: 0` would busy-loop the poller).
+    pub fn sanitize(&self) -> Self {
+        let mut s = self.clone();
+        s.port = if s.port == 0 {
+            crate::protocol::DEFAULT_PORT
+        } else {
+            s.port
+        };
+        s.history_limit = s.history_limit.clamp(MIN_HISTORY_ENTRIES, MAX_HISTORY_ENTRIES);
+        s.max_history_text_bytes = s.max_history_text_bytes.clamp(1024, 4 * 1024 * 1024);
+        // Minimum 10 ms poll to prevent busy-loop.
+        s.clipboard_poll_ms = s.clipboard_poll_ms.max(10);
+        // Rate limits must be positive.
+        s.max_pushes_per_sec = if s.max_pushes_per_sec <= 0.0 { 1.0 } else { s.max_pushes_per_sec.min(100.0) };
+        s.rate_limit_burst = if s.rate_limit_burst <= 0.0 { 1.0 } else { s.rate_limit_burst.min(50.0) };
+        s.smart_sync_debounce_ms = s.smart_sync_debounce_ms.min(5_000);
+        s.smart_sync_duplicate_window_ms = s.smart_sync_duplicate_window_ms.min(30_000);
+        s.auto_apply_debounce_ms = s.auto_apply_debounce_ms.min(10_000);
+        // Strip empty strings from lists.
+        s.blocked_device_ids.retain(|id| !id.is_empty());
+        s.ignore_patterns.retain(|p| !p.is_empty());
+        s.auto_apply_allowed_devices.retain(|id| !id.is_empty());
+        s
+    }
+
+    /// Validate settings, returning a list of human-readable problems.
+    ///
+    /// An empty Vec means the settings are valid.
+    pub fn validate(&self) -> Vec<String> {
+        let mut errors = Vec::new();
+        if self.port == 0 {
+            errors.push("port must not be 0".into());
+        }
+        if self.clipboard_poll_ms < 10 {
+            errors.push(format!(
+                "clipboard_poll_ms ({}) is below 10 ms — risk of busy-loop",
+                self.clipboard_poll_ms
+            ));
+        }
+        if self.max_pushes_per_sec <= 0.0 {
+            errors.push("max_pushes_per_sec must be > 0".into());
+        }
+        if self.rate_limit_burst < 1.0 {
+            errors.push("rate_limit_burst must be ≥ 1".into());
+        }
+        if self.history_limit < MIN_HISTORY_ENTRIES || self.history_limit > MAX_HISTORY_ENTRIES {
+            errors.push(format!(
+                "history_limit ({}) must be between {} and {}",
+                self.history_limit, MIN_HISTORY_ENTRIES, MAX_HISTORY_ENTRIES
+            ));
+        }
+        // Warn about insecure combinations.
+        if !self.require_tofu_confirmation {
+            errors.push(
+                "require_tofu_confirmation is false — devices will be auto-trusted (security risk)".into(),
+            );
+        }
+        errors
+    }
 }
+
+/// Minimum/maximum bounds for history_limit (also used by history module).
+pub const MIN_HISTORY_ENTRIES: usize = 20;
+pub const MAX_HISTORY_ENTRIES: usize = 100;
 
 // ── SettingsStore ─────────────────────────────────────────────────────────────
 
@@ -328,4 +395,39 @@ mod tests {
         store.reset().unwrap();
         assert_eq!(store.get().port, crate::protocol::DEFAULT_PORT);
     }
-}
+
+    #[test]
+    fn validate_detects_bad_poll_interval() {
+        let mut s = Settings::default();
+        s.clipboard_poll_ms = 0;
+        let errs = s.validate();
+        assert!(errs.iter().any(|e| e.contains("clipboard_poll_ms")));
+    }
+
+    #[test]
+    fn validate_clean_on_defaults() {
+        // Defaults should only produce the TOFU warning (intentional trade-off).
+        let s = Settings::default();
+        let errs = s.validate();
+        // All defaults are valid except the TOFU security advisory.
+        let hard_errors: Vec<_> = errs.iter()
+            .filter(|e| !e.contains("tofu"))
+            .collect();
+        assert!(hard_errors.is_empty(), "unexpected errors: {:?}", hard_errors);
+    }
+
+    #[test]
+    fn sanitize_clamps_poll_ms() {
+        let mut s = Settings::default();
+        s.clipboard_poll_ms = 0;
+        let clean = s.sanitize();
+        assert!(clean.clipboard_poll_ms >= 10);
+    }
+
+    #[test]
+    fn sanitize_strips_empty_patterns() {
+        let mut s = Settings::default();
+        s.ignore_patterns = vec!["".into(), "foo".into(), "".into()];
+        let clean = s.sanitize();
+        assert_eq!(clean.ignore_patterns, vec!["foo"]);
+    }

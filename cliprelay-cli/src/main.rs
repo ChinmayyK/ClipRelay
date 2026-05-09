@@ -27,6 +27,10 @@ async fn run() -> Result<()> {
     match refs.as_slice() {
         [] | ["status"] => cmd_status().await,
         ["ping"] => cmd_ping().await,
+        ["version"] | ["--version"] | ["-V"] => {
+            println!("cliprelay-cli {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         ["push", text] => cmd_push(text).await,
         ["send", target, text] => cmd_send(target, text).await,
         ["connect", ip] => cmd_connect(ip, cliprelay_core::protocol::DEFAULT_PORT).await,
@@ -51,6 +55,7 @@ async fn run() -> Result<()> {
         ["history", "unpin", id] => cmd_history_pin(id, false).await,
         ["history", "repush", id] => cmd_history_repush(id, None).await,
         ["history", "repush", id, target] => cmd_history_repush(id, Some(target)).await,
+        ["history", "delete", id] => cmd_history_delete(id).await,
         ["settings"] | ["settings", "get"] => cmd_settings_get(None),
         ["settings", "get", key] => cmd_settings_get(Some(key)),
         ["settings", "set", key, value] => cmd_settings_set(key, value),
@@ -58,7 +63,7 @@ async fn run() -> Result<()> {
         ["sync", "on"] => cmd_sync(true).await,
         ["sync", "off"] => cmd_sync(false).await,
         ["stop"] => cmd_stop().await,
-        ["help"] | ["--help"] => {
+        ["help"] | ["--help"] | ["-h"] => {
             print_help();
             Ok(())
         }
@@ -525,6 +530,22 @@ async fn cmd_history_clear() -> Result<()> {
     Ok(())
 }
 
+async fn cmd_history_delete(id_str: &str) -> Result<()> {
+    let id: u64 = id_str.parse().context("id must be a number")?;
+    // Try live daemon first; fall back to direct file edit.
+    if let Some(IpcResponse::Ok { .. }) = try_ipc(&IpcRequest::HistoryDelete { id }).await {
+        println!("✅  entry {} deleted (live)", id);
+        return Ok(());
+    }
+    let mut history = History::load(default_history_path())?;
+    if history.remove(id)? {
+        println!("✅  entry {} deleted", id);
+    } else {
+        bail!("entry {} not found in history", id);
+    }
+    Ok(())
+}
+
 fn cmd_settings_get(key: Option<&str>) -> Result<()> {
     let store = SettingsStore::load(default_settings_path())?;
     let value = serde_json::to_value(store.get())?;
@@ -658,64 +679,77 @@ fn payload_summary(payload: Option<&serde_json::Value>) -> String {
 
 fn print_help() {
     println!(
-        r#"cliprelay-cli  0.1.0  —  ClipRelay management tool
+        r#"cliprelay-cli {}  —  ClipRelay management tool
 
 USAGE:  cliprelay-cli <command> [args]
-        cliprelay-cli /history
+        cliprelay-cli /history            (leading slash prefix accepted)
         cliprelay-cli /send <device> "<text>"
 
 DAEMON CONTROL
-  status                        Show status (live or offline)
-  ping                          Check daemon health / RTT
-  push "<text>"                 Push text to all peers
-  send <device> "<text>"        Push text to one device
-  connect <ip> [port]           Manually connect to a peer
-  sync on|off                   Enable or disable clipboard syncing
-  stop                          Gracefully stop the daemon
+  status                          Show status (live from daemon or offline snapshot)
+  ping                            Check daemon health / measure IPC round-trip time
+  push "<text>"                   Push text to all connected peers
+  send <device> "<text>"          Push text to one specific device (name or UUID prefix)
+  connect <ip> [port]             Manually connect to a peer by IP address
+  sync on|off                     Enable or disable clipboard syncing globally
+  stop                            Gracefully stop the daemon
+  version                         Print version and exit
 
 PEERS
-  peers                         List currently connected peers
-  events [--last N]             Show recent feedback events
+  peers                           List currently connected peers with stats
+  events [--last N]               Show recent feedback events (default: last 20)
 
 DEVICES
-  devices list                  List all known devices and trust states
-  devices show <uuid>           Show full trust details and fingerprint
-  devices trust <uuid>          Trust an untrusted device
-  devices retrust <uuid>        Alias for trust
-  devices reject <uuid>         Reject a device without trusting it
-  devices revoke <uuid>         Revoke trust for a device
-  devices rename <uuid> <name>  Assign a friendly display name
+  devices list                    List all known devices and their trust state
+  devices show <uuid>             Show full trust details and key fingerprint
+  devices trust <uuid>            Trust an untrusted device (TOFU accept)
+  devices retrust <uuid>          Alias for 'trust'
+  devices reject <uuid>           Reject a device (deny this session, don't remember)
+  devices revoke <uuid>           Revoke trust for a previously-trusted device
+  devices rename <uuid> <name>    Assign a human-readable display name
 
 HISTORY
-  history [--last N]            Show recent clipboard history (default 20)
-  history --search <query>      Search history
-  history pin <id>              Pin a history item
-  history unpin <id>            Remove a pin
-  history repush <id> [device]  Re-send a text history item
-  history clear                 Clear all history
+  history [--last N]              Show recent clipboard history (default: 20)
+  history --search <query>        Full-text search through history
+  history --last N --search <q>   Combine limit and search
+  history pin <id>                Pin an entry so it survives the ring-buffer limit
+  history unpin <id>              Remove a pin
+  history repush <id> [device]    Re-send a stored text entry (optional: to one device)
+  history delete <id>             Delete a single history entry
+  history clear                   Clear all history (irreversible)
 
 SETTINGS
-  settings get [<key>]          Print all settings or one key
-  settings set <key> <value>    Update a setting (JSON-typed value)
-  settings reset                Reset all settings to defaults
+  settings get [<key>]            Print all settings (JSON) or one key's value
+  settings set <key> <value>      Update a setting; value is JSON-typed
+  settings reset                  Reset all settings to factory defaults
 
 COMMON SETTINGS KEYS
-  device_name                    Override local device name
-  sync_enabled                   bool — master sync switch
-  sync_text / sync_images / sync_files
-  max_payload_bytes              configurable blob size ceiling
-  history_limit                  bounded between 20 and 100
-  max_history_text_bytes         retained text per history item
-  block_sensitive_text           enable password/secret heuristics
-  smart_sync_duplicate_window_ms suppress rapid duplicate copies
-  smart_sync_debounce_ms         debounce repeat copy bursts
+  device_name                     Override local device name (empty = use hostname)
+  sync_enabled                    bool — master sync on/off switch
+  sync_text / sync_images         bool — sync specific content types
+  sync_files                      bool — sync file transfers
+  max_payload_bytes               Maximum synced payload (bytes)
+  history_limit                   Max entries retained (20–100)
+  max_history_text_bytes          Max stored text per history entry
+  block_sensitive_text            bool — heuristic password/secret suppression
+  smart_sync_duplicate_window_ms  Suppress identical copies within this window (ms)
+  smart_sync_debounce_ms          Coalesce rapid copy bursts (ms)
+  timeline_first_mode             bool — remote items land in feed before clipboard
+  auto_apply_remote_clipboard     bool — auto-apply from feed (requires timeline_first)
+  clipboard_poll_ms               Local clipboard poll interval (min 10 ms)
+  require_tofu_confirmation       bool — prompt for new device trust (recommended: true)
+  start_on_login                  bool — launch daemon on system login
 
 EXAMPLES
   cliprelay-cli /history
+  cliprelay-cli history --search "github"
   cliprelay-cli send macbook "meeting at 3pm"
-  cliprelay-cli history repush 42 windows
+  cliprelay-cli history repush 42 windows-pc
+  cliprelay-cli history delete 17
   cliprelay-cli devices show 550e8400-e29b-41d4-a716-446655440000
+  cliprelay-cli settings set block_sensitive_text true
   cliprelay-cli events --last 10
-"#
+"#,
+        env!("CARGO_PKG_VERSION")
     );
 }

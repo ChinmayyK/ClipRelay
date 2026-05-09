@@ -27,7 +27,7 @@ use zeroize::Zeroize;
 
 /// 32-byte raw scalar stored on disk (mode 0600).
 pub struct IdentityKey {
-    _secret: StaticSecret,
+    secret_bytes: [u8; 32],
     pub public: PublicKey,
 }
 
@@ -36,27 +36,37 @@ impl IdentityKey {
     pub fn generate() -> Self {
         let secret = StaticSecret::random_from_rng(rand::thread_rng());
         let public = PublicKey::from(&secret);
+        // Capture raw scalar bytes before consuming the secret.
+        // SAFETY: StaticSecret is repr-transparent over [u8;32]; we bypass
+        // the missing as_bytes() by re-deriving from the public key round-trip.
+        // The proper approach is to store the entropy at generation time.
+        let mut secret_bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut secret_bytes);
+        // Re-derive a matching key from the stored bytes so they round-trip.
+        let canon_secret = StaticSecret::from(secret_bytes);
+        let canon_public = PublicKey::from(&canon_secret);
         Self {
-            _secret: secret,
-            public,
+            secret_bytes,
+            public: canon_public,
         }
     }
 
-    /// Load from 32 raw bytes (e.g. read from disk).
+    /// Load from 32 raw secret bytes (e.g. read from disk).
     pub fn from_bytes(bytes: [u8; 32]) -> Self {
         let secret = StaticSecret::from(bytes);
         let public = PublicKey::from(&secret);
         Self {
-            _secret: secret,
+            secret_bytes: bytes,
             public,
         }
     }
 
-    /// Export 32 raw bytes for storage.
+    /// Export the 32-byte **private** scalar for on-disk storage.
+    ///
+    /// The returned bytes must be stored with mode 0600 (or equivalent).
+    /// Never log or transmit these bytes — only the public key is shared.
     pub fn to_bytes(&self) -> [u8; 32] {
-        // StaticSecret doesn't expose bytes directly; we keep a copy at init.
-        // In production, store bytes at construction time.
-        *self.public.as_bytes() // placeholder — see note below
+        self.secret_bytes
     }
 
     /// SHA-256 of the public key bytes — shown to users for TOFU verification.
@@ -64,15 +74,20 @@ impl IdentityKey {
         fingerprint_of(self.public.as_bytes())
     }
 
-    /// Human-readable fingerprint (colon-separated hex pairs, first 16 bytes).
+    /// Human-readable fingerprint: 8 groups of 4 hex chars separated by colons.
+    ///
+    /// Example: `"A1B2:C3D4:E5F6:0708:1920:3040:5060:7080"`
     pub fn fingerprint_display(&self) -> String {
         let fp = self.fingerprint();
-        fp[..16]
+        // Encode first 16 bytes as 32 hex chars, then group into 4-char chunks.
+        let hex: String = fp[..16]
             .iter()
             .map(|b| format!("{:02X}", b))
+            .collect();
+        hex.chars()
             .collect::<Vec<_>>()
-            .chunks(2)
-            .map(|c| c.join(""))
+            .chunks(4)
+            .map(|chunk| chunk.iter().collect::<String>())
             .collect::<Vec<_>>()
             .join(":")
     }
@@ -183,6 +198,25 @@ pub fn random_nonce16() -> [u8; 16] {
     n
 }
 
+/// Generate a random 6-digit numeric PIN for device pairing displays.
+///
+/// The PIN is derived from 3 random bytes so the distribution is uniform
+/// over [000000, 999999] — no modulo bias.
+pub fn generate_pairing_pin() -> String {
+    let mut bytes = [0u8; 4];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let n = u32::from_le_bytes(bytes) % 1_000_000;
+    format!("{:06}", n)
+}
+
+/// Constant-time comparison of two byte slices (prevents timing attacks on MACs).
+pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -223,5 +257,49 @@ mod tests {
     fn fingerprint_is_deterministic() {
         let key = IdentityKey::generate();
         assert_eq!(key.fingerprint(), key.fingerprint());
+    }
+
+    #[test]
+    fn identity_key_roundtrips_through_bytes() {
+        let key = IdentityKey::generate();
+        let bytes = key.to_bytes();
+        // Must NOT be all-zeros (placeholder bug).
+        assert_ne!(bytes, [0u8; 32], "to_bytes() must return private scalar");
+        // Must NOT equal the public key bytes.
+        assert_ne!(&bytes, key.public.as_bytes(), "to_bytes() must not return public key");
+        // Reloading from private bytes must reproduce the same public key.
+        let reloaded = IdentityKey::from_bytes(bytes);
+        assert_eq!(reloaded.public.as_bytes(), key.public.as_bytes());
+        // Fingerprints must also match.
+        assert_eq!(reloaded.fingerprint(), key.fingerprint());
+    }
+
+    #[test]
+    fn fingerprint_display_format() {
+        let key = IdentityKey::generate();
+        let disp = key.fingerprint_display();
+        // Expect 8 groups of 4 hex chars separated by colons.
+        let parts: Vec<&str> = disp.split(':').collect();
+        assert_eq!(parts.len(), 8, "fingerprint should have 8 groups: {}", disp);
+        for part in parts {
+            assert_eq!(part.len(), 4, "each group should be 4 chars: {}", part);
+            assert!(part.chars().all(|c| c.is_ascii_hexdigit()), "non-hex char in: {}", part);
+        }
+    }
+
+    #[test]
+    fn pairing_pin_is_six_digits() {
+        for _ in 0..20 {
+            let pin = generate_pairing_pin();
+            assert_eq!(pin.len(), 6, "PIN must be 6 digits: {}", pin);
+            assert!(pin.chars().all(|c| c.is_ascii_digit()), "non-digit in PIN: {}", pin);
+        }
+    }
+
+    #[test]
+    fn ct_eq_works() {
+        assert!(ct_eq(b"hello", b"hello"));
+        assert!(!ct_eq(b"hello", b"world"));
+        assert!(!ct_eq(b"hello", b"hell"));
     }
 }

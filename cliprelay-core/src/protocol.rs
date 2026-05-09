@@ -41,6 +41,65 @@ impl ClipboardContent {
             ClipboardContent::File { .. } => "file",
         }
     }
+
+    /// A short human-readable preview suitable for notifications and timeline entries.
+    ///
+    /// Text is truncated to `max_chars` with an ellipsis; images and files show
+    /// their type and size. The preview is always a single line.
+    pub fn truncated_preview(&self, max_chars: usize) -> String {
+        match self {
+            ClipboardContent::Text(s) => {
+                // Collapse to first non-empty line, then truncate.
+                let first = s
+                    .lines()
+                    .map(str::trim)
+                    .find(|l| !l.is_empty())
+                    .unwrap_or("(empty)");
+                if first.len() <= max_chars {
+                    first.to_string()
+                } else {
+                    // Truncate at a char boundary.
+                    let mut end = max_chars.saturating_sub(1);
+                    while end > 0 && !first.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}…", &first[..end])
+                }
+            }
+            ClipboardContent::Image { mime, data } => {
+                let kb = data.len() as f64 / 1024.0;
+                if kb >= 1024.0 {
+                    format!("[Image {} {:.1} MB]", mime, kb / 1024.0)
+                } else {
+                    format!("[Image {} {:.0} KB]", mime, kb)
+                }
+            }
+            ClipboardContent::File { name, data } => {
+                let kb = data.len() as f64 / 1024.0;
+                if kb >= 1024.0 {
+                    format!("[File '{}' {:.1} MB]", name, kb / 1024.0)
+                } else {
+                    format!("[File '{}' {:.0} KB]", name, kb)
+                }
+            }
+        }
+    }
+
+    /// Word count for text content; 0 for images and files.
+    pub fn word_count(&self) -> usize {
+        match self {
+            ClipboardContent::Text(s) => s.split_whitespace().count(),
+            _ => 0,
+        }
+    }
+
+    /// Line count for text content; 0 for images and files.
+    pub fn line_count(&self) -> usize {
+        match self {
+            ClipboardContent::Text(s) => s.lines().count(),
+            _ => 0,
+        }
+    }
 }
 
 // ── History metadata ──────────────────────────────────────────────────────────

@@ -26,10 +26,50 @@ pub const MAX_ATTEMPTS: u32 = 8;
 /// Jitter fraction — delay ± this fraction of the current interval.
 const JITTER: f64 = 0.25;
 
+/// Configurable retry policy.
+///
+/// Use `RetryConfig::default()` for the standard ClipRelay policy, or build
+/// a custom one for e.g. unit tests that need faster timeouts.
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    /// Delay before the first retry attempt.
+    pub initial_delay: Duration,
+    /// Maximum delay after many failures (exponential back-off cap).
+    pub max_delay: Duration,
+    /// Maximum number of consecutive attempts before giving up.
+    pub max_attempts: u32,
+    /// Jitter fraction (0.0 = no jitter, 0.25 = ±25 %).
+    pub jitter: f64,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            initial_delay: INITIAL_DELAY,
+            max_delay: MAX_DELAY,
+            max_attempts: MAX_ATTEMPTS,
+            jitter: JITTER,
+        }
+    }
+}
+
+impl RetryConfig {
+    /// Fast retry config suitable for unit tests.
+    pub fn fast() -> Self {
+        Self {
+            initial_delay: Duration::from_millis(1),
+            max_delay: Duration::from_millis(16),
+            max_attempts: 4,
+            jitter: 0.0,
+        }
+    }
+}
+
 // ── Backoff ───────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct Backoff {
+    config: RetryConfig,
     current: Duration,
     attempts: u32,
     peer_label: String,
@@ -37,8 +77,22 @@ pub struct Backoff {
 
 impl Backoff {
     pub fn new(peer_label: impl Into<String>) -> Self {
+        let config = RetryConfig::default();
+        let initial = config.initial_delay;
         Self {
-            current: INITIAL_DELAY,
+            config,
+            current: initial,
+            attempts: 0,
+            peer_label: peer_label.into(),
+        }
+    }
+
+    /// Create a `Backoff` with a custom `RetryConfig`.
+    pub fn with_config(peer_label: impl Into<String>, config: RetryConfig) -> Self {
+        let initial = config.initial_delay;
+        Self {
+            config,
+            current: initial,
             attempts: 0,
             peer_label: peer_label.into(),
         }
@@ -48,7 +102,7 @@ impl Backoff {
     /// `None` if the peer is considered unreachable for now.
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Option<Duration> {
-        if self.attempts >= MAX_ATTEMPTS {
+        if self.attempts >= self.config.max_attempts {
             debug!(
                 "[retry] {} — gave up after {} attempts",
                 self.peer_label, self.attempts
@@ -66,13 +120,13 @@ impl Backoff {
         );
 
         // Advance for next call.
-        self.current = (self.current * 2).min(MAX_DELAY);
+        self.current = (self.current * 2).min(self.config.max_delay);
         Some(delay)
     }
 
     /// Reset after a successful connection.
     pub fn reset(&mut self) {
-        self.current = INITIAL_DELAY;
+        self.current = self.config.initial_delay;
         self.attempts = 0;
     }
 
@@ -81,12 +135,12 @@ impl Backoff {
     }
 
     pub fn exhausted(&self) -> bool {
-        self.attempts >= MAX_ATTEMPTS
+        self.attempts >= self.config.max_attempts
     }
 
     fn jittered(&self, base: Duration) -> Duration {
         let base_ns = base.as_nanos() as f64;
-        let range = base_ns * JITTER;
+        let range = base_ns * self.config.jitter;
         // Uniform random in [-range, +range].
         let offset = (rand::random::<f64>() * 2.0 - 1.0) * range;
         let ns = (base_ns + offset).max(1.0) as u64;
@@ -129,12 +183,12 @@ mod tests {
 
     #[test]
     fn backoff_doubles() {
-        let mut b = Backoff::new("test");
+        let mut b = Backoff::with_config("test", RetryConfig { jitter: 0.0, ..RetryConfig::default() });
         let d0 = b.next().unwrap();
         let d1 = b.next().unwrap();
-        // Second delay should be roughly 2× the first (within jitter).
+        // Second delay must be exactly 2× the first (no jitter).
         let ratio = d1.as_nanos() as f64 / d0.as_nanos() as f64;
-        assert!((1.0..=4.0).contains(&ratio), "ratio {:.2}", ratio);
+        assert!((1.9..=2.1).contains(&ratio), "ratio {:.3}", ratio);
     }
 
     #[test]
@@ -177,6 +231,17 @@ mod tests {
         }
     }
 
+    #[test]
+    fn custom_config_fast() {
+        let cfg = RetryConfig::fast();
+        let mut b = Backoff::with_config("fast-test", cfg.clone());
+        let mut count = 0;
+        while b.next().is_some() {
+            count += 1;
+        }
+        assert_eq!(count, cfg.max_attempts as usize);
+    }
+
     #[tokio::test]
     async fn retry_async_succeeds_on_second_try() {
         use std::sync::{
@@ -184,7 +249,7 @@ mod tests {
             Arc,
         };
 
-        let mut b = Backoff::new("test");
+        let mut b = Backoff::with_config("test", RetryConfig::fast());
         let calls = Arc::new(AtomicU32::new(0));
         let calls_for_retry = calls.clone();
         let result: Result<u32, &str> = retry_async(&mut b, || async {
@@ -199,4 +264,3 @@ mod tests {
         assert_eq!(result.unwrap(), 42);
         assert_eq!(calls.load(Ordering::Relaxed), 2);
     }
-}
