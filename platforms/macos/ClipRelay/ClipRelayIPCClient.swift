@@ -221,3 +221,34 @@ enum ClipRelayIPCError: Error {
     case connectionFailed
     case noData
 }
+<<<<<<< HEAD
+=======
+
+// MARK: - Dashboard extensions (stubs — wire to daemon when ready)
+
+extension ClipRelayIPCClient {
+    func connectManual(address: String) async throws {
+        _ = try await send(cmd: ["op": "connect_manual", "address": address])
+    }
+    func sendClipboardByHash(hash: String, targetDeviceId: String?) async throws {
+        var cmd: [String: Any] = ["op": "send_clipboard_hash", "hash": hash]
+        if let id = targetDeviceId { cmd["target_device_id"] = id }
+        _ = try await send(cmd: cmd)
+    }
+    func sendClipboardCurrent(targetDeviceId: String?) async throws {
+        var cmd: [String: Any] = ["op": "send_clipboard_current"]
+        if let id = targetDeviceId { cmd["target_device_id"] = id }
+        _ = try await send(cmd: cmd)
+    }
+    func saveSettings(_ snapshot: ClipRelaySettingsSnapshot) async throws {
+        let cmd: [String: Any] = [
+            "op":           "save_settings",
+            "port":         snapshot.port,
+            "device_name":  snapshot.deviceName,
+            "sync_enabled": snapshot.syncEnabled,
+            "history_limit": snapshot.historyLimit,
+        ]
+        _ = try await send(cmd: cmd)
+    }
+}
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)

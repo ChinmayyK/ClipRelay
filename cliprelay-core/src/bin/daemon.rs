@@ -1,11 +1,19 @@
 use anyhow::{anyhow, Context, Result};
 use cliprelay_core::{
     engine::{Engine, EngineConfig, EngineEvent, SyncDispatchReport, SyncTarget},
+<<<<<<< HEAD
     history::{History, HistoryEntry},
     ipc::{IpcRequest, IpcResponse},
     peer_manager::PeerConnectionState,
     protocol::ClipboardContent,
     settings::{default_history_path, default_settings_path, SettingsStore},
+=======
+    history::{History, HistoryEntry, HistoryFilter},
+    ipc::{IpcRequest, IpcResponse},
+    peer_manager::PeerConnectionState,
+    protocol::ClipboardContent,
+    settings::{ClipboardTemplate, PeerSettings, default_history_path, default_settings_path, SettingsStore},
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
     trust::format_fingerprint,
 };
 use serde::Serialize;
@@ -573,6 +581,145 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
             state.engine.apply_settings(updated).await;
             Ok(IpcResponse::ok_empty())
         }
+<<<<<<< HEAD
+=======
+
+        // ── History tag management ────────────────────────────────────────────
+        IpcRequest::HistoryTag { id, tag } => {
+            let added = state.history.lock().await.add_tag(id, &tag)?;
+            Ok(IpcResponse::ok(serde_json::json!({ "added": added })))
+        }
+        IpcRequest::HistoryUntag { id, tag } => {
+            let removed = state.history.lock().await.remove_tag(id, &tag)?;
+            Ok(IpcResponse::ok(serde_json::json!({ "removed": removed })))
+        }
+
+        // ── History stats & JSON export ───────────────────────────────────────
+        IpcRequest::HistoryStats => {
+            let stats = state.history.lock().await.stats();
+            Ok(IpcResponse::ok(stats))
+        }
+        IpcRequest::HistoryExportJson => {
+            let json = state.history.lock().await.export_json()?;
+            Ok(IpcResponse::Ok {
+                data: serde_json::from_str(&json).ok(),
+            })
+        }
+
+        // ── Filtered history ──────────────────────────────────────────────────
+        IpcRequest::HistoryFilteredList {
+            kind,
+            device,
+            from_secs,
+            to_secs,
+            tag,
+            limit,
+            pinned_only,
+        } => {
+            let filter = HistoryFilter {
+                kind,
+                device,
+                from_secs,
+                to_secs,
+                tag,
+                limit: Some(limit),
+                pinned_only,
+            };
+            let history = state.history.lock().await;
+            let entries: Vec<_> = history.filter(&filter).cloned().collect();
+            Ok(IpcResponse::ok(entries))
+        }
+
+        // ── Clipboard templates ───────────────────────────────────────────────
+        IpcRequest::TemplateList => {
+            let templates = state.settings.lock().await.get().clipboard_templates.clone();
+            Ok(IpcResponse::ok(templates))
+        }
+        IpcRequest::TemplatePush { name, target_device } => {
+            let templates = state.settings.lock().await.get().clipboard_templates.clone();
+            let tmpl = templates
+                .iter()
+                .find(|t| t.name.eq_ignore_ascii_case(&name))
+                .cloned()
+                .with_context(|| format!("template '{}' not found", name))?;
+            let target = target_device
+                .as_deref()
+                .map(parse_uuid)
+                .transpose()?
+                .map(SyncTarget::Device)
+                .unwrap_or(SyncTarget::All);
+            let content = ClipboardContent::Text(tmpl.text.clone());
+            remember_history(state, &content, current_device_name(state).await).await?;
+            Ok(IpcResponse::ok(
+                state.engine.push_clipboard_to(content, target).await,
+            ))
+        }
+        IpcRequest::TemplateSet { name, text, description } => {
+            let mut store = state.settings.lock().await;
+            let settings = store.get_mut();
+            if let Some(t) = settings
+                .clipboard_templates
+                .iter_mut()
+                .find(|t| t.name.eq_ignore_ascii_case(&name))
+            {
+                t.text = text;
+                t.description = description;
+            } else {
+                settings.clipboard_templates.push(
+                    ClipboardTemplate { name, text, description },
+                );
+            }
+            store.save()?;
+            Ok(IpcResponse::ok_empty())
+        }
+        IpcRequest::TemplateRemove { name } => {
+            let mut store = state.settings.lock().await;
+            let before = store.get().clipboard_templates.len();
+            store
+                .get_mut()
+                .clipboard_templates
+                .retain(|t| !t.name.eq_ignore_ascii_case(&name));
+            let removed = store.get().clipboard_templates.len() != before;
+            store.save()?;
+            Ok(IpcResponse::ok(serde_json::json!({ "removed": removed })))
+        }
+
+        // ── Per-peer settings ─────────────────────────────────────────────────
+        IpcRequest::GetPeerSettings { device_id } => {
+            let store = state.settings.lock().await;
+            let peer = store
+                .get()
+                .per_peer
+                .get(&device_id)
+                .cloned()
+                .unwrap_or_default();
+            Ok(IpcResponse::ok(peer))
+        }
+        IpcRequest::PatchPeerSettings { device_id, patch } => {
+            let mut store = state.settings.lock().await;
+            let peer = store
+                .get_mut()
+                .per_peer
+                .entry(device_id)
+                .or_default();
+            // Apply partial JSON patch to PeerSettings.
+            let mut current =
+                serde_json::to_value(&*peer).context("serialising peer settings")?;
+            let patch_val: serde_json::Value =
+                serde_json::from_str(&patch).context("parsing peer settings patch")?;
+            if let (Some(obj), Some(patch_obj)) =
+                (current.as_object_mut(), patch_val.as_object())
+            {
+                for (k, v) in patch_obj {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+            *peer = serde_json::from_value(current).context("applying peer settings patch")?;
+            store.save()?;
+            Ok(IpcResponse::ok_empty())
+        }
+
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
         IpcRequest::Shutdown => {
             state.shutdown.notify_waiters();
             Ok(IpcResponse::ok_empty())

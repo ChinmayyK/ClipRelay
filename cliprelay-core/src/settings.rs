@@ -120,6 +120,63 @@ pub struct Settings {
     // ── UI ───────────────────────────────────────────────────────────────────
     /// Start ClipRelay automatically on login.
     pub start_on_login: bool,
+<<<<<<< HEAD
+=======
+
+    // ── Advanced filtering ────────────────────────────────────────────────────
+    /// Minimum number of non-whitespace characters for a text clip to be synced.
+    /// 0 = no minimum (default). Useful to suppress trivial single-char copies.
+    pub min_text_length: usize,
+
+    /// When true, only sync text content that starts with a recognised URL scheme
+    /// (http://, https://, ftp://, ssh://, git://, mailto:).
+    pub sync_urls_only: bool,
+
+    // ── Clipboard templates ───────────────────────────────────────────────────
+    /// Named preset text snippets the user can push on demand.
+    /// Push via `cliprelay-cli template push <name>`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clipboard_templates: Vec<ClipboardTemplate>,
+
+    // ── Per-peer overrides ────────────────────────────────────────────────────
+    /// Per-device overrides keyed by UUID string.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub per_peer: std::collections::HashMap<String, PeerSettings>,
+}
+
+// ── ClipboardTemplate ─────────────────────────────────────────────────────────
+
+/// A named preset text snippet that can be pushed to peers on demand.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClipboardTemplate {
+    /// Short identifier (e.g. "email", "address", "meeting-link").
+    pub name: String,
+    /// The text content to push.
+    pub text: String,
+    /// Optional description shown in the CLI listing.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+}
+
+// ── PeerSettings ──────────────────────────────────────────────────────────────
+
+/// Per-device overrides that supplement the global settings.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PeerSettings {
+    /// Override the display name for this peer in the UI.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display_name: String,
+    /// If Some(true/false), override the global `auto_apply_remote_clipboard`
+    /// for clipboard items arriving from this device.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub auto_apply: Option<bool>,
+    /// If true, clipboard sync is paused for this device (connection stays up).
+    #[serde(default)]
+    pub sync_paused: bool,
+    /// If Some, override the global `max_payload_bytes` for this device.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_payload_bytes: Option<u64>,
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
 }
 
 impl Default for Settings {
@@ -152,6 +209,13 @@ impl Default for Settings {
             auto_accept_file_transfers: true,
             auto_accept_max_bytes: 50 * 1024 * 1024, // 50 MB
             start_on_login: false,
+<<<<<<< HEAD
+=======
+            min_text_length: 0,
+            sync_urls_only: false,
+            clipboard_templates: Vec::new(),
+            per_peer: std::collections::HashMap::new(),
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
         }
     }
 }

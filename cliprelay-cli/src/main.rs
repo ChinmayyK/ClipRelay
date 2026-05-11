@@ -44,6 +44,17 @@ async fn run() -> Result<()> {
         ["devices", "reject", id] => cmd_devices_reject(id).await,
         ["devices", "revoke", id] => cmd_devices_revoke(id),
         ["devices", "rename", id, name] => cmd_devices_rename(id, name).await,
+<<<<<<< HEAD
+=======
+        // Peer settings
+        ["devices", "peer-settings", id] => cmd_peer_settings_get(id).await,
+        ["devices", "peer-settings", id, "pause"] => cmd_peer_settings_patch(id, r#"{"sync_paused":true}"#).await,
+        ["devices", "peer-settings", id, "resume"] => cmd_peer_settings_patch(id, r#"{"sync_paused":false}"#).await,
+        ["devices", "peer-settings", id, "auto-apply", "on"] => cmd_peer_settings_patch(id, r#"{"auto_apply":true}"#).await,
+        ["devices", "peer-settings", id, "auto-apply", "off"] => cmd_peer_settings_patch(id, r#"{"auto_apply":false}"#).await,
+
+        // History — basic
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
         ["history"] => cmd_history(20, None).await,
         ["history", "--last", n] => cmd_history(n.parse().context("bad N")?, None).await,
         ["history", "--search", q] => cmd_history(100, Some(*q)).await,
@@ -56,7 +67,38 @@ async fn run() -> Result<()> {
         ["history", "repush", id] => cmd_history_repush(id, None).await,
         ["history", "repush", id, target] => cmd_history_repush(id, Some(target)).await,
         ["history", "delete", id] => cmd_history_delete(id).await,
+<<<<<<< HEAD
         ["history", "export"] | ["history", "export", "csv"] => cmd_history_export_csv().await,
+=======
+        // History — export
+        ["history", "export"] | ["history", "export", "csv"] => cmd_history_export_csv().await,
+        ["history", "export", "json"] => cmd_history_export_json().await,
+        // History — stats
+        ["history", "stats"] => cmd_history_stats().await,
+        // History — tags
+        ["history", "tag", id, tag] => cmd_history_tag(id, tag, true).await,
+        ["history", "untag", id, tag] => cmd_history_tag(id, tag, false).await,
+        // History — filtered list (type, device, pinned, date)
+        ["history", "--type", kind] => cmd_history_filtered(kind, None, None, None, None, 50, false).await,
+        ["history", "--device", device] => cmd_history_filtered("", Some(*device), None, None, None, 50, false).await,
+        ["history", "--tag", tag] => cmd_history_filtered("", None, None, None, Some(*tag), 50, false).await,
+        ["history", "--pinned"] => cmd_history_filtered("", None, None, None, None, 100, true).await,
+        ["history", "--type", kind, "--last", n] => {
+            cmd_history_filtered(kind, None, None, None, None, n.parse().context("bad N")?, false).await
+        }
+        ["history", "--device", device, "--last", n] => {
+            cmd_history_filtered("", Some(*device), None, None, None, n.parse().context("bad N")?, false).await
+        }
+
+        // Templates
+        ["template"] | ["template", "list"] => cmd_template_list().await,
+        ["template", "push", name] => cmd_template_push(name, None).await,
+        ["template", "push", name, "--to", device] => cmd_template_push(name, Some(device)).await,
+        ["template", "add", name, text] => cmd_template_set(name, text, "").await,
+        ["template", "add", name, "--desc", desc, text] => cmd_template_set(name, text, desc).await,
+        ["template", "remove", name] => cmd_template_remove(name).await,
+
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
         ["metrics"] => cmd_metrics().await,
         ["settings"] | ["settings", "get"] => cmd_settings_get(None),
         ["settings", "get", key] => cmd_settings_get(Some(key)),
@@ -564,6 +606,263 @@ async fn cmd_history_export_csv() -> Result<()> {
     Ok(())
 }
 
+<<<<<<< HEAD
+=======
+async fn cmd_history_export_json() -> Result<()> {
+    match ipc(&IpcRequest::HistoryExportJson).await? {
+        IpcResponse::Ok { data: Some(data) } => {
+            println!("{}", serde_json::to_string_pretty(&data)?);
+        }
+        IpcResponse::Ok { data: None } => {
+            // Fallback: read from disk.
+            let history = History::load(default_history_path())?;
+            println!("{}", history.export_json()?);
+        }
+        IpcResponse::Error { message } => bail!("{}", message),
+        response => bail!("{:?}", response),
+    }
+    Ok(())
+}
+
+async fn cmd_history_stats() -> Result<()> {
+    match ipc(&IpcRequest::HistoryStats).await? {
+        IpcResponse::Ok { data: Some(data) } => {
+            println!("Clipboard History — Statistics\n{}", "═".repeat(38));
+            println!("  Total entries:   {}", data["total"].as_u64().unwrap_or(0));
+            println!("  Text:            {}", data["text_count"].as_u64().unwrap_or(0));
+            println!("  Images:          {}", data["image_count"].as_u64().unwrap_or(0));
+            println!("  Files:           {}", data["file_count"].as_u64().unwrap_or(0));
+            println!("  Pinned:          {}", data["pinned_count"].as_u64().unwrap_or(0));
+            println!("  Tagged:          {}", data["tagged_count"].as_u64().unwrap_or(0));
+            println!("  Devices seen:    {}", data["distinct_devices"].as_u64().unwrap_or(0));
+            let text_kb = data["total_text_bytes"].as_u64().unwrap_or(0) / 1024;
+            let img_kb = data["total_image_bytes"].as_u64().unwrap_or(0) / 1024;
+            let file_kb = data["total_file_bytes"].as_u64().unwrap_or(0) / 1024;
+            println!("  Text stored:     {} KB", text_kb);
+            println!("  Images stored:   {} KB", img_kb);
+            println!("  Files stored:    {} KB", file_kb);
+            let oldest = data["oldest_ts"].as_u64().unwrap_or(0);
+            let newest = data["newest_ts"].as_u64().unwrap_or(0);
+            if oldest > 0 {
+                println!("  Oldest entry:    {}", fmt_ts(oldest));
+                println!("  Newest entry:    {}", fmt_ts(newest));
+            }
+        }
+        IpcResponse::Error { message } => bail!("{}", message),
+        _ => {
+            // Offline fallback.
+            let history = History::load(default_history_path())?;
+            let stats = history.stats();
+            println!("Clipboard History — Statistics (offline)\n{}", "═".repeat(40));
+            println!("  Total entries:   {}", stats.total);
+            println!("  Text:            {}", stats.text_count);
+            println!("  Images:          {}", stats.image_count);
+            println!("  Files:           {}", stats.file_count);
+            println!("  Pinned:          {}", stats.pinned_count);
+            println!("  Tagged:          {}", stats.tagged_count);
+        }
+    }
+    Ok(())
+}
+
+async fn cmd_history_tag(id_str: &str, tag: &str, add: bool) -> Result<()> {
+    let id: u64 = id_str.parse().context("bad history ID")?;
+    let req = if add {
+        IpcRequest::HistoryTag { id, tag: tag.to_string() }
+    } else {
+        IpcRequest::HistoryUntag { id, tag: tag.to_string() }
+    };
+    match ipc(&req).await? {
+        IpcResponse::Ok { .. } => {
+            if add {
+                println!("✅  tagged item #{} with '{}'", id, tag);
+            } else {
+                println!("✅  removed tag '{}' from item #{}", tag, id);
+            }
+        }
+        IpcResponse::Error { message } => bail!("{}", message),
+        response => bail!("{:?}", response),
+    }
+    Ok(())
+}
+
+async fn cmd_history_filtered(
+    kind: &str,
+    device: Option<&str>,
+    from_secs: Option<u64>,
+    to_secs: Option<u64>,
+    tag: Option<&str>,
+    limit: usize,
+    pinned_only: bool,
+) -> Result<()> {
+    let req = IpcRequest::HistoryFilteredList {
+        kind: if kind.is_empty() { None } else { Some(kind.to_string()) },
+        device: device.map(str::to_string),
+        from_secs,
+        to_secs,
+        tag: tag.map(str::to_string),
+        limit,
+        pinned_only,
+    };
+    match ipc(&req).await? {
+        IpcResponse::Ok { data: Some(data) } => {
+            let entries = data.as_array().cloned().unwrap_or_default();
+            if entries.is_empty() {
+                println!("No history entries match the filter.");
+                return Ok(());
+            }
+            println!("{:<6}  {:<17}  {:<16}  {:<8}  {}", "ID", "Time", "Device", "Kind", "Summary");
+            println!("{}", "─".repeat(90));
+            for e in &entries {
+                let tags_str = e["tags"]
+                    .as_array()
+                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(","))
+                    .unwrap_or_default();
+                let tag_disp = if tags_str.is_empty() { String::new() } else { format!(" [{}]", tags_str) };
+                let pin = if e["pinned"].as_bool().unwrap_or(false) { "📌 " } else { "" };
+                println!(
+                    "{:<6}  {:<17}  {:<16}  {:<8}  {}{}{}",
+                    e["id"].as_u64().unwrap_or(0),
+                    fmt_ts(e["timestamp"].as_u64().unwrap_or(0)),
+                    trunc(e["source_device"].as_str().unwrap_or("?"), 16),
+                    e["payload"]["type"].as_str().unwrap_or("?"),
+                    pin,
+                    trunc_summary(&e),
+                    tag_disp,
+                );
+            }
+            println!("\n{} entry/entries.", entries.len());
+        }
+        IpcResponse::Error { message } => bail!("{}", message),
+        _ => println!("No data (daemon not running?)."),
+    }
+    Ok(())
+}
+
+async fn cmd_template_list() -> Result<()> {
+    match ipc(&IpcRequest::TemplateList).await? {
+        IpcResponse::Ok { data: Some(data) } => {
+            let templates = data.as_array().cloned().unwrap_or_default();
+            if templates.is_empty() {
+                println!("No templates configured. Add one with: cliprelay-cli template add <name> <text>");
+                return Ok(());
+            }
+            println!("{:<20}  {:<30}  Text", "Name", "Description");
+            println!("{}", "─".repeat(80));
+            for t in &templates {
+                let name = t["name"].as_str().unwrap_or("?");
+                let desc = t["description"].as_str().unwrap_or("");
+                let text = t["text"].as_str().unwrap_or("");
+                let text_preview = if text.len() > 40 { format!("{}…", &text[..40]) } else { text.to_string() };
+                println!("{:<20}  {:<30}  {}", name, desc, text_preview);
+            }
+        }
+        IpcResponse::Error { message } => bail!("{}", message),
+        _ => println!("No templates (daemon not running?)."),
+    }
+    Ok(())
+}
+
+async fn cmd_template_push(name: &str, target: Option<&str>) -> Result<()> {
+    print_dispatch_response(
+        ipc(&IpcRequest::TemplatePush {
+            name: name.to_string(),
+            target_device: target.map(str::to_string),
+        })
+        .await?,
+    )
+}
+
+async fn cmd_template_set(name: &str, text: &str, description: &str) -> Result<()> {
+    match ipc(&IpcRequest::TemplateSet {
+        name: name.to_string(),
+        text: text.to_string(),
+        description: description.to_string(),
+    })
+    .await?
+    {
+        IpcResponse::Ok { .. } => println!("✅  template '{}' saved.", name),
+        IpcResponse::Error { message } => bail!("{}", message),
+        response => bail!("{:?}", response),
+    }
+    Ok(())
+}
+
+async fn cmd_template_remove(name: &str) -> Result<()> {
+    match ipc(&IpcRequest::TemplateRemove { name: name.to_string() }).await? {
+        IpcResponse::Ok { data } => {
+            let removed = data
+                .as_ref()
+                .and_then(|d| d["removed"].as_bool())
+                .unwrap_or(false);
+            if removed {
+                println!("✅  template '{}' removed.", name);
+            } else {
+                println!("⚠️  template '{}' not found.", name);
+            }
+        }
+        IpcResponse::Error { message } => bail!("{}", message),
+        response => bail!("{:?}", response),
+    }
+    Ok(())
+}
+
+async fn cmd_peer_settings_get(device_id: &str) -> Result<()> {
+    match ipc(&IpcRequest::GetPeerSettings { device_id: device_id.to_string() }).await? {
+        IpcResponse::Ok { data: Some(data) } => {
+            println!("Per-peer settings for {}:", device_id);
+            println!("  display_name: {}", data["display_name"].as_str().unwrap_or("(not set)"));
+            println!("  auto_apply:   {}", data["auto_apply"].as_bool().map(bool_icon).unwrap_or("(inherit global)"));
+            println!("  sync_paused:  {}", bool_icon(data["sync_paused"].as_bool().unwrap_or(false)));
+            if let Some(max) = data["max_payload_bytes"].as_u64() {
+                println!("  max_payload:  {} MB", max / 1024 / 1024);
+            } else {
+                println!("  max_payload:  (inherit global)");
+            }
+        }
+        IpcResponse::Error { message } => bail!("{}", message),
+        _ => println!("No data."),
+    }
+    Ok(())
+}
+
+async fn cmd_peer_settings_patch(device_id: &str, patch: &str) -> Result<()> {
+    match ipc(&IpcRequest::PatchPeerSettings {
+        device_id: device_id.to_string(),
+        patch: patch.to_string(),
+    })
+    .await?
+    {
+        IpcResponse::Ok { .. } => println!("✅  peer settings updated for {}.", device_id),
+        IpcResponse::Error { message } => bail!("{}", message),
+        response => bail!("{:?}", response),
+    }
+    Ok(())
+}
+
+fn trunc_summary(entry: &serde_json::Value) -> String {
+    let kind = entry["payload"]["type"].as_str().unwrap_or("");
+    match kind {
+        "Text" => {
+            let preview = entry["payload"]["preview"].as_str().unwrap_or("");
+            let first = preview.lines().next().unwrap_or("").trim();
+            if first.len() > 50 { format!("{}…", &first[..50]) } else { first.to_string() }
+        }
+        "Image" => {
+            let mime = entry["payload"]["mime"].as_str().unwrap_or("image");
+            let kb = entry["payload"]["bytes"].as_u64().unwrap_or(0) / 1024;
+            format!("[Image {} {} KB]", mime, kb)
+        }
+        "File" => {
+            let name = entry["payload"]["name"].as_str().unwrap_or("?");
+            let kb = entry["payload"]["bytes"].as_u64().unwrap_or(0) / 1024;
+            format!("[File '{}' {} KB]", name, kb)
+        }
+        _ => entry["payload"]["summary"].as_str().unwrap_or("?").to_string(),
+    }
+}
+
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
 async fn cmd_metrics() -> Result<()> {
     match ipc(&IpcRequest::GetMetrics).await? {
         IpcResponse::Ok { data: Some(data) } => {
@@ -741,11 +1040,20 @@ DEVICES
   devices reject <uuid>           Reject a device (deny this session, don't remember)
   devices revoke <uuid>           Revoke trust for a previously-trusted device
   devices rename <uuid> <name>    Assign a human-readable display name
+<<<<<<< HEAD
+=======
+  devices peer-settings <uuid>    Show per-device sync settings
+  devices peer-settings <uuid> pause          Pause sync from this device
+  devices peer-settings <uuid> resume         Resume sync from this device
+  devices peer-settings <uuid> auto-apply on  Auto-apply clipboard from this device
+  devices peer-settings <uuid> auto-apply off Disable auto-apply from this device
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
 
 HISTORY
   history [--last N]              Show recent clipboard history (default: 20)
   history --search <query>        Full-text search through history
   history --last N --search <q>   Combine limit and search
+<<<<<<< HEAD
   history pin <id>                Pin an entry so it survives the ring-buffer limit
   history unpin <id>              Remove a pin
   history repush <id> [device]    Re-send a stored text entry (optional: to one device)
@@ -753,6 +1061,31 @@ HISTORY
   history export [csv]            Export full history as CSV (stdout)
   history clear                   Clear all history (irreversible)
 
+=======
+  history --type <text|image|file>  Filter by content type
+  history --device <name>         Filter by source device name (substring)
+  history --tag <tag>             Filter by tag
+  history --pinned                Show only pinned entries
+  history stats                   Show aggregated history statistics
+  history pin <id>                Pin an entry so it survives the ring-buffer limit
+  history unpin <id>              Remove a pin
+  history tag <id> <tag>          Add a tag label to a history entry
+  history untag <id> <tag>        Remove a tag from a history entry
+  history repush <id> [device]    Re-send a stored text entry (optional: to one device)
+  history delete <id>             Delete a single history entry
+  history export [csv]            Export full history as CSV (stdout)
+  history export json             Export full history as JSON (stdout)
+  history clear                   Clear all history (irreversible)
+
+TEMPLATES
+  template list                   List all configured clipboard templates
+  template add <name> <text>      Create or update a named text template
+  template add <name> --desc <d> <text>  Create with description
+  template push <name>            Push a template to all peers
+  template push <name> --to <dev> Push a template to one device
+  template remove <name>          Delete a template
+
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
 SETTINGS
   settings get [<key>]            Print all settings (JSON) or one key's value
   settings set <key> <value>      Update a setting; value is JSON-typed
@@ -763,8 +1096,15 @@ COMMON SETTINGS KEYS
   sync_enabled                    bool — master sync on/off switch
   sync_text / sync_images         bool — sync specific content types
   sync_files                      bool — sync file transfers
+<<<<<<< HEAD
   max_payload_bytes               Maximum synced payload (bytes)
   history_limit                   Max entries retained (20–100)
+=======
+  sync_urls_only                  bool — only sync content that is a URL
+  min_text_length                 int  — skip text with fewer non-whitespace chars
+  max_payload_bytes               Maximum synced payload (bytes)
+  history_limit                   Max entries retained (20–500)
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
   max_history_text_bytes          Max stored text per history entry
   block_sensitive_text            bool — heuristic password/secret suppression
   smart_sync_duplicate_window_ms  Suppress identical copies within this window (ms)
@@ -778,13 +1118,32 @@ COMMON SETTINGS KEYS
 EXAMPLES
   cliprelay-cli /history
   cliprelay-cli history --search "github"
+<<<<<<< HEAD
   cliprelay-cli send macbook "meeting at 3pm"
   cliprelay-cli history repush 42 windows-pc
   cliprelay-cli history delete 17
   cliprelay-cli devices show 550e8400-e29b-41d4-a716-446655440000
   cliprelay-cli settings set block_sensitive_text true
+=======
+  cliprelay-cli history --type text --last 10
+  cliprelay-cli history --device iphone
+  cliprelay-cli history stats
+  cliprelay-cli history tag 42 work
+  cliprelay-cli history export json > backup.json
+  cliprelay-cli template add email "alice@example.com"
+  cliprelay-cli template push email
+  cliprelay-cli send macbook "meeting at 3pm"
+  cliprelay-cli history repush 42 windows-pc
+  cliprelay-cli devices peer-settings <uuid> pause
+  cliprelay-cli settings set sync_urls_only true
+  cliprelay-cli settings set min_text_length 3
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
   cliprelay-cli events --last 10
 "#,
         env!("CARGO_PKG_VERSION")
     );
 }
+<<<<<<< HEAD
+=======
+
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)

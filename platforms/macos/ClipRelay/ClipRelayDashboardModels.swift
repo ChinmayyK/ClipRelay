@@ -1,0 +1,251 @@
+// ClipRelayDashboardModels.swift
+// Models used exclusively by the macOS dashboard views.
+
+import Foundation
+import SwiftUI
+
+// MARK: - Dashboard Navigation
+
+enum DashboardSection: String, CaseIterable, Identifiable {
+    case timeline, devices, trust, settings
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .timeline: return "Timeline"
+        case .devices:  return "Devices"
+        case .trust:    return "Trust"
+        case .settings: return "Settings"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .timeline: return "clock.arrow.circlepath"
+        case .devices:  return "desktopcomputer"
+        case .trust:    return "checkmark.shield.fill"
+        case .settings: return "slider.horizontal.3"
+        }
+    }
+
+    var eyebrow: String {
+        switch self {
+        case .timeline: return "Activity"
+        case .devices:  return "Network"
+        case .trust:    return "Security"
+        case .settings: return "Configuration"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .timeline:
+            return "All clipboard activity across your devices, in order."
+        case .devices:
+            return "Discover, connect, and manage nearby peers."
+        case .trust:
+            return "Approve or reject devices requesting access."
+        case .settings:
+            return "Tune sync behaviour, filters, and network settings."
+        }
+    }
+}
+
+// MARK: - Timeline Item (display model for activity feed)
+
+struct TimelineItem: Identifiable {
+    let id: Int64
+    let iconName: String
+    let title: String
+    let typeLabel: String
+    let sourceDevice: String
+    let timestamp: Date
+    var pinned: Bool
+    let fullText: String?
+    let filePath: String?
+
+    init(entry: IpcActivityEntry, pinned: Bool) {
+        self.id           = entry.id
+        self.sourceDevice = entry.device_name
+        self.timestamp    = Date(timeIntervalSince1970: Double(entry.timestamp_ms) / 1000.0)
+        self.pinned       = pinned
+        self.fullText     = entry.text_preview
+        self.filePath     = entry.file_name
+
+        switch entry.kind {
+        case "remote_clipboard_available", "clipboard_text":
+            self.typeLabel = "Text"
+            self.iconName  = "doc.on.clipboard"
+            self.title     = entry.text_preview?.isEmpty == false
+                ? entry.text_preview!
+                : entry.summary
+        case "clipboard_image":
+            self.typeLabel = "Image"
+            self.iconName  = "photo"
+            self.title     = "Image from \(entry.device_name)"
+        case "file_transfer_complete", "file_transfer_started":
+            self.typeLabel = "File"
+            self.iconName  = "doc.fill"
+            self.title     = entry.file_name ?? entry.summary
+        case "peer_connected":
+            self.typeLabel = "Connection"
+            self.iconName  = "wifi"
+            self.title     = entry.summary
+        case "peer_disconnected":
+            self.typeLabel = "Connection"
+            self.iconName  = "wifi.slash"
+            self.title     = entry.summary
+        default:
+            self.typeLabel = "Event"
+            self.iconName  = "bolt.circle"
+            self.title     = entry.summary
+        }
+    }
+}
+
+// MARK: - Toast Notification
+
+struct ToastItem: Identifiable {
+    let id: UUID = UUID()
+    let title: String
+    let body: String
+    let tint: Color
+}
+
+// MARK: - Quick Send Context
+
+struct QuickSendContext {
+    let text: String
+    let timestamp: Date
+}
+
+// MARK: - Status Snapshot
+
+struct StatusSnapshot {
+    let peerCount: Int
+    let trustedCount: Int
+    let lastSyncAt: Date?
+    let syncEnabled: Bool
+    let daemonVersion: String?
+}
+
+// MARK: - Device Detail (for trust prompt)
+
+struct DeviceDetailSnapshot {
+    let deviceId: String
+    let deviceName: String
+    let fingerprint: String
+    let lastSeen: Date?
+
+    var effectiveName: String { deviceName }
+}
+
+// MARK: - Settings Snapshot
+
+struct ClipRelaySettingsSnapshot {
+    var port: UInt16
+    var deviceName: String
+    var syncEnabled: Bool
+    var syncText: Bool
+    var syncImages: Bool
+    var syncFiles: Bool
+    var syncMode: SyncModeModel
+    var maxPayloadBytes: UInt64
+    var historyLimit: Int
+    var maxHistoryTextBytes: Int
+    var showReceiveNotification: Bool
+    var requireTofuConfirmation: Bool
+    var blockedDeviceIds: [String]
+    var blockSensitiveText: Bool
+    var ignorePatterns: [String]
+    var clipboardPollMs: UInt64
+    var maxPushesPerSec: Int
+    var rateLimitBurst: Int
+    var smartSyncDuplicateWindowMs: UInt64
+    var smartSyncDebounceMs: UInt64
+    var startOnLogin: Bool
+}
+
+// MARK: - Sync Mode
+
+enum SyncModeModel: String, CaseIterable, Identifiable {
+    case auto, manual, receive
+    var id: String { rawValue }
+}
+
+// MARK: - Managed Device (UI wrapper over PeerViewModel)
+
+struct ManagedDevice: Identifiable {
+    let id: String
+    var name: String
+    let rawName: String
+    let endpoint: String?
+    let connectionState: DeviceConnectionState
+    let trustState: DeviceTrustState
+    let fingerprint: String?
+    let lastSeen: Date?
+    let lastSync: Date?
+    let lastError: String?
+
+    var isConnected: Bool { connectionState == .connected }
+
+    init(peer: PeerViewModel) {
+        self.id              = peer.id
+        self.name            = peer.displayName
+        self.rawName         = peer.displayName
+        self.endpoint        = nil
+        self.connectionState = peer.connected ? .connected : .disconnected
+        self.trustState      = peer.trusted   ? .trusted   : .untrusted
+        self.fingerprint     = nil
+        self.lastSeen        = peer.lastSeen
+        self.lastSync        = peer.lastSync
+        self.lastError       = nil
+    }
+}
+
+// MARK: - Device Connection State
+
+enum DeviceConnectionState {
+    case connected, connecting, disconnected
+
+    var label: String {
+        switch self {
+        case .connected:    return "Connected"
+        case .connecting:   return "Connecting"
+        case .disconnected: return "Offline"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .connected:    return PBTheme.accentGreen
+        case .connecting:   return PBTheme.accentGold
+        case .disconnected: return PBTheme.inkSoft
+        }
+    }
+}
+
+// MARK: - Device Trust State
+
+enum DeviceTrustState: String {
+    case trusted, untrusted, rejected
+
+    var color: Color {
+        switch self {
+        case .trusted:   return PBTheme.accentGreen
+        case .untrusted: return PBTheme.accentGold
+        case .rejected:  return PBTheme.accentRed
+        }
+    }
+}
+
+// MARK: - Date Extension
+
+extension Date {
+    func relativeTimeString() -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: self, relativeTo: Date())
+    }
+}

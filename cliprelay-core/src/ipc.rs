@@ -121,6 +121,63 @@ pub enum IpcRequest {
     Ping,
     /// Get a serializable snapshot of global runtime metrics.
     GetMetrics,
+<<<<<<< HEAD
+=======
+
+    // ── History tag management ────────────────────────────────────────────────
+    /// Add a tag to a history entry.
+    HistoryTag { id: u64, tag: String },
+    /// Remove a tag from a history entry.
+    HistoryUntag { id: u64, tag: String },
+
+    // ── History stats & export ────────────────────────────────────────────────
+    /// Return aggregated statistics over the history buffer.
+    HistoryStats,
+    /// Export full history as a JSON array.
+    HistoryExportJson,
+
+    // ── Filtered history ──────────────────────────────────────────────────────
+    /// Return a filtered list of history entries.
+    HistoryFilteredList {
+        /// Restrict to "text", "image", "file", or "metadata".
+        kind: Option<String>,
+        /// Case-insensitive device name substring.
+        device: Option<String>,
+        /// Include only entries at or after this Unix timestamp.
+        from_secs: Option<u64>,
+        /// Include only entries at or before this Unix timestamp.
+        to_secs: Option<u64>,
+        /// Must contain this tag.
+        tag: Option<String>,
+        /// Maximum results to return.
+        limit: usize,
+        /// If true, only return pinned entries.
+        pinned_only: bool,
+    },
+
+    // ── Clipboard templates ───────────────────────────────────────────────────
+    /// List all configured clipboard templates.
+    TemplateList,
+    /// Push a named template to all (or one) peer.
+    TemplatePush {
+        name: String,
+        target_device: Option<String>,
+    },
+    /// Add or replace a clipboard template.
+    TemplateSet {
+        name: String,
+        text: String,
+        description: String,
+    },
+    /// Remove a clipboard template by name.
+    TemplateRemove { name: String },
+
+    // ── Per-peer settings ─────────────────────────────────────────────────────
+    /// Get per-peer settings for a specific device.
+    GetPeerSettings { device_id: String },
+    /// Patch per-peer settings for a specific device (partial JSON).
+    PatchPeerSettings { device_id: String, patch: String },
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -65,6 +65,21 @@ impl FilterChain {
             allow_files: settings.sync_files,
         });
 
+<<<<<<< HEAD
+=======
+        // Skip trivially short text copies if configured.
+        if settings.min_text_length > 0 {
+            chain.push(MinLengthFilter {
+                min_chars: settings.min_text_length,
+            });
+        }
+
+        // URL-only mode: only sync content that looks like a URL.
+        if settings.sync_urls_only {
+            chain.push(UrlOnlyFilter);
+        }
+
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
         chain.push(IgnorePatternFilter::from_settings(settings));
         chain.push(ExtensionFilter::default());
         chain.push(SensitiveTextFilter::from_settings(settings));
@@ -94,6 +109,159 @@ impl Default for FilterChain {
     }
 }
 
+<<<<<<< HEAD
+=======
+// ── MinLengthFilter ───────────────────────────────────────────────────────────
+
+/// Reject text that is shorter than `min_chars` Unicode scalar values.
+/// Images and files always pass.
+///
+/// Useful to suppress single-character or whitespace-only clipboard events
+/// that accumulate from keyboard-driven selection on some platforms.
+pub struct MinLengthFilter {
+    pub min_chars: usize,
+}
+
+impl Filter for MinLengthFilter {
+    fn name(&self) -> &'static str {
+        "min_length"
+    }
+
+    fn check(&self, content: &ClipboardContent) -> Verdict {
+        if let ClipboardContent::Text(text) = content {
+            let char_count = text.chars().filter(|c| !c.is_whitespace()).count();
+            if char_count < self.min_chars {
+                return Verdict::deny(format!(
+                    "text too short: {} non-whitespace chars < min {}",
+                    char_count, self.min_chars
+                ));
+            }
+        }
+        Verdict::Allow
+    }
+}
+
+// ── UrlOnlyFilter ─────────────────────────────────────────────────────────────
+
+/// When enabled, only sync text that looks like an absolute URL.
+/// Images and files are always allowed through.
+///
+/// Matches: http://, https://, ftp://, and ssh:// scheme prefixes
+/// (case-insensitive). Does not validate the full URL structure — just
+/// the scheme prefix, which avoids the need for an external URL parser.
+pub struct UrlOnlyFilter;
+
+impl UrlOnlyFilter {
+    fn looks_like_url(text: &str) -> bool {
+        let t = text.trim().to_lowercase();
+        t.starts_with("http://")
+            || t.starts_with("https://")
+            || t.starts_with("ftp://")
+            || t.starts_with("ssh://")
+            || t.starts_with("git://")
+            || t.starts_with("mailto:")
+    }
+}
+
+impl Filter for UrlOnlyFilter {
+    fn name(&self) -> &'static str {
+        "url_only"
+    }
+
+    fn check(&self, content: &ClipboardContent) -> Verdict {
+        match content {
+            ClipboardContent::Text(text) => {
+                if Self::looks_like_url(text) {
+                    Verdict::Allow
+                } else {
+                    Verdict::deny("url_only mode: text does not start with a recognised URL scheme")
+                }
+            }
+            // Images and files always pass.
+            _ => Verdict::Allow,
+        }
+    }
+}
+
+// ── GlobPatternFilter ─────────────────────────────────────────────────────────
+
+/// Deny clipboard content whose text matches any glob-style pattern.
+///
+/// Supported wildcards:
+/// - `*` — matches any sequence of characters (zero or more)
+/// - `?` — matches exactly one character
+///
+/// Matching is case-insensitive. Patterns are applied to the full text for
+/// text content and to the filename for file content.
+pub struct GlobPatternFilter {
+    patterns: Vec<String>,
+}
+
+impl GlobPatternFilter {
+    pub fn new(patterns: Vec<String>) -> Self {
+        Self {
+            patterns: patterns
+                .into_iter()
+                .map(|p| p.to_lowercase())
+                .filter(|p| !p.is_empty())
+                .collect(),
+        }
+    }
+
+    /// Simple glob match: `*` = any chars, `?` = one char.
+    fn glob_match(pattern: &str, text: &str) -> bool {
+        let pat: Vec<char> = pattern.chars().collect();
+        let txt: Vec<char> = text.chars().collect();
+        Self::match_dp(&pat, &txt)
+    }
+
+    fn match_dp(pat: &[char], txt: &[char]) -> bool {
+        let (m, n) = (pat.len(), txt.len());
+        let mut dp = vec![vec![false; n + 1]; m + 1];
+        dp[0][0] = true;
+        // Leading stars match empty string.
+        for i in 1..=m {
+            if pat[i - 1] == '*' {
+                dp[i][0] = dp[i - 1][0];
+            }
+        }
+        for i in 1..=m {
+            for j in 1..=n {
+                if pat[i - 1] == '*' {
+                    dp[i][j] = dp[i - 1][j] || dp[i][j - 1];
+                } else if pat[i - 1] == '?' || pat[i - 1] == txt[j - 1] {
+                    dp[i][j] = dp[i - 1][j - 1];
+                }
+            }
+        }
+        dp[m][n]
+    }
+}
+
+impl Filter for GlobPatternFilter {
+    fn name(&self) -> &'static str {
+        "glob_pattern"
+    }
+
+    fn check(&self, content: &ClipboardContent) -> Verdict {
+        if self.patterns.is_empty() {
+            return Verdict::Allow;
+        }
+        let haystack = match content {
+            ClipboardContent::Text(text) => text.to_lowercase(),
+            ClipboardContent::File { name, .. } => name.to_lowercase(),
+            ClipboardContent::Image { .. } => return Verdict::Allow,
+        };
+        for pattern in &self.patterns {
+            if Self::glob_match(pattern, &haystack) {
+                return Verdict::deny(format!("content matches glob pattern '{}'", pattern));
+            }
+        }
+        Verdict::Allow
+    }
+}
+
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
 pub struct IgnorePatternFilter {
     patterns: Vec<String>,
 }
@@ -566,4 +734,110 @@ mod tests {
         });
         assert_eq!(chain.run(&text("safe text")), Verdict::Allow);
     }
+<<<<<<< HEAD
+=======
+
+    // ── MinLengthFilter tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn min_length_allows_long_enough() {
+        let f = MinLengthFilter { min_chars: 3 };
+        assert_eq!(f.check(&text("hello")), Verdict::Allow);
+        assert_eq!(f.check(&text("abc")), Verdict::Allow);
+    }
+
+    #[test]
+    fn min_length_denies_too_short() {
+        let f = MinLengthFilter { min_chars: 3 };
+        assert!(matches!(f.check(&text("ab")), Verdict::Deny { .. }));
+        assert!(matches!(f.check(&text("a")), Verdict::Deny { .. }));
+    }
+
+    #[test]
+    fn min_length_ignores_whitespace() {
+        // "  a  " has only 1 non-whitespace char.
+        let f = MinLengthFilter { min_chars: 3 };
+        assert!(matches!(f.check(&text("  a  ")), Verdict::Deny { .. }));
+        // "  abc  " has 3 non-whitespace chars — should pass.
+        assert_eq!(f.check(&text("  abc  ")), Verdict::Allow);
+    }
+
+    #[test]
+    fn min_length_passes_images_and_files() {
+        let f = MinLengthFilter { min_chars: 100 };
+        assert_eq!(f.check(&image()), Verdict::Allow);
+        assert_eq!(f.check(&file("doc.pdf")), Verdict::Allow);
+    }
+
+    // ── UrlOnlyFilter tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn url_only_allows_https() {
+        let f = UrlOnlyFilter;
+        assert_eq!(f.check(&text("https://example.com/path")), Verdict::Allow);
+    }
+
+    #[test]
+    fn url_only_allows_http() {
+        let f = UrlOnlyFilter;
+        assert_eq!(f.check(&text("http://localhost:8080")), Verdict::Allow);
+    }
+
+    #[test]
+    fn url_only_allows_git_and_mailto() {
+        let f = UrlOnlyFilter;
+        assert_eq!(f.check(&text("git://github.com/foo/bar")), Verdict::Allow);
+        assert_eq!(f.check(&text("mailto:alice@example.com")), Verdict::Allow);
+    }
+
+    #[test]
+    fn url_only_denies_plain_text() {
+        let f = UrlOnlyFilter;
+        assert!(matches!(f.check(&text("hello world")), Verdict::Deny { .. }));
+        assert!(matches!(f.check(&text("meeting at 3pm")), Verdict::Deny { .. }));
+    }
+
+    #[test]
+    fn url_only_passes_images_and_files() {
+        let f = UrlOnlyFilter;
+        assert_eq!(f.check(&image()), Verdict::Allow);
+        assert_eq!(f.check(&file("document.pdf")), Verdict::Allow);
+    }
+
+    // ── GlobPatternFilter tests ───────────────────────────────────────────────
+
+    #[test]
+    fn glob_star_matches_any() {
+        let f = GlobPatternFilter::new(vec!["secret*".into()]);
+        assert!(matches!(f.check(&text("secret_value_123")), Verdict::Deny { .. }));
+        assert!(matches!(f.check(&text("secretabc")), Verdict::Deny { .. }));
+        assert_eq!(f.check(&text("public value")), Verdict::Allow);
+    }
+
+    #[test]
+    fn glob_question_matches_one() {
+        let f = GlobPatternFilter::new(vec!["foo?bar".into()]);
+        assert!(matches!(f.check(&text("foo_bar")), Verdict::Deny { .. }));
+        assert!(matches!(f.check(&text("fooxbar")), Verdict::Deny { .. }));
+        assert_eq!(f.check(&text("foobar")), Verdict::Allow);
+    }
+
+    #[test]
+    fn glob_case_insensitive() {
+        let f = GlobPatternFilter::new(vec!["password*".into()]);
+        assert!(matches!(f.check(&text("PASSWORD=hunter2")), Verdict::Deny { .. }));
+    }
+
+    #[test]
+    fn glob_empty_patterns_allow_all() {
+        let f = GlobPatternFilter::new(vec![]);
+        assert_eq!(f.check(&text("anything goes")), Verdict::Allow);
+    }
+
+    #[test]
+    fn glob_star_star_matches_everything() {
+        let f = GlobPatternFilter::new(vec!["*".into()]);
+        assert!(matches!(f.check(&text("any text")), Verdict::Deny { .. }));
+    }
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
 }

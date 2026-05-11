@@ -1,5 +1,9 @@
 //! Clipboard history — a bounded, persisted ring buffer of recent clipboard
+<<<<<<< HEAD
 //! entries with pinning and metadata-only support for targeted sync.
+=======
+//! entries with pinning, tagging, date-range filtering, stats, and JSON export.
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
 
 use crate::dedup::hash_content;
 use crate::protocol::{ClipboardContent, HistoryMetadata};
@@ -10,7 +14,11 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MIN_ENTRIES: usize = 20;
+<<<<<<< HEAD
 pub const MAX_ENTRIES: usize = 100;
+=======
+pub const MAX_ENTRIES: usize = 500;
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
 pub const DEFAULT_ENTRIES: usize = 50;
 pub const DEFAULT_MAX_TEXT_BYTES: usize = 64 * 1024;
 pub const MAX_TEXT_PREVIEW: usize = 4096;
@@ -26,6 +34,52 @@ fn clamp_entries(limit: usize) -> usize {
     limit.clamp(MIN_ENTRIES, MAX_ENTRIES)
 }
 
+<<<<<<< HEAD
+=======
+/// Aggregated statistics over the full history buffer.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HistoryStats {
+    pub total: usize,
+    pub text_count: usize,
+    pub image_count: usize,
+    pub file_count: usize,
+    pub metadata_count: usize,
+    pub pinned_count: usize,
+    pub tagged_count: usize,
+    /// Total bytes stored across all text entries.
+    pub total_text_bytes: u64,
+    /// Total bytes for image entries.
+    pub total_image_bytes: u64,
+    /// Total bytes for file entries.
+    pub total_file_bytes: u64,
+    /// Number of distinct source devices seen in history.
+    pub distinct_devices: usize,
+    /// Oldest entry timestamp (Unix seconds), 0 if empty.
+    pub oldest_ts: u64,
+    /// Newest entry timestamp (Unix seconds), 0 if empty.
+    pub newest_ts: u64,
+}
+
+/// Query parameters for filtered history retrieval.
+#[derive(Debug, Clone, Default)]
+pub struct HistoryFilter {
+    /// Restrict to entries of this kind: "text", "image", "file", "metadata".
+    pub kind: Option<String>,
+    /// Case-insensitive substring match on `source_device`.
+    pub device: Option<String>,
+    /// Include only entries at or after this Unix timestamp.
+    pub from_secs: Option<u64>,
+    /// Include only entries at or before this Unix timestamp.
+    pub to_secs: Option<u64>,
+    /// Must contain this tag (exact, case-insensitive).
+    pub tag: Option<String>,
+    /// Maximum number of results (applied after all other filters).
+    pub limit: Option<usize>,
+    /// If true, only return pinned entries.
+    pub pinned_only: bool,
+}
+
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HistoryEntry {
     pub id: u64,
@@ -35,6 +89,12 @@ pub struct HistoryEntry {
     pub hash: String,
     #[serde(default)]
     pub pinned: bool,
+<<<<<<< HEAD
+=======
+    /// User-defined labels for this entry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +160,10 @@ impl HistoryEntry {
             payload,
             hash,
             pinned: false,
+<<<<<<< HEAD
+=======
+            tags: Vec::new(),
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
         }
     }
 
@@ -116,6 +180,10 @@ impl HistoryEntry {
             },
             hash: meta.hash.clone(),
             pinned: meta.pinned,
+<<<<<<< HEAD
+=======
+            tags: Vec::new(),
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
         }
     }
 
@@ -284,6 +352,142 @@ impl History {
         Ok(None)
     }
 
+<<<<<<< HEAD
+=======
+    /// Add a tag to a history entry. Tags are stored lowercase and deduplicated.
+    /// Returns `true` if the tag was added (false if it already existed or entry not found).
+    pub fn add_tag(&mut self, id: u64, tag: &str) -> Result<bool> {
+        let tag = tag.trim().to_lowercase();
+        if tag.is_empty() {
+            return Ok(false);
+        }
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
+            if entry.tags.contains(&tag) {
+                return Ok(false);
+            }
+            entry.tags.push(tag);
+            self.persist()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Remove a tag from a history entry.
+    /// Returns `true` if the tag was removed.
+    pub fn remove_tag(&mut self, id: u64, tag: &str) -> Result<bool> {
+        let tag = tag.trim().to_lowercase();
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
+            let before = entry.tags.len();
+            entry.tags.retain(|t| t != &tag);
+            if entry.tags.len() != before {
+                self.persist()?;
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Return aggregated statistics over the full history buffer.
+    pub fn stats(&self) -> HistoryStats {
+        use std::collections::HashSet;
+        let mut stats = HistoryStats::default();
+        let mut devices: HashSet<&str> = HashSet::new();
+
+        for entry in &self.entries {
+            stats.total += 1;
+            if entry.pinned {
+                stats.pinned_count += 1;
+            }
+            if !entry.tags.is_empty() {
+                stats.tagged_count += 1;
+            }
+            devices.insert(&entry.source_device);
+
+            if stats.oldest_ts == 0 || entry.timestamp < stats.oldest_ts {
+                stats.oldest_ts = entry.timestamp;
+            }
+            if entry.timestamp > stats.newest_ts {
+                stats.newest_ts = entry.timestamp;
+            }
+
+            match &entry.payload {
+                HistoryPayload::Text { full_len, .. } => {
+                    stats.text_count += 1;
+                    stats.total_text_bytes += *full_len as u64;
+                }
+                HistoryPayload::Image { bytes, .. } => {
+                    stats.image_count += 1;
+                    stats.total_image_bytes += bytes;
+                }
+                HistoryPayload::File { bytes, .. } => {
+                    stats.file_count += 1;
+                    stats.total_file_bytes += bytes;
+                }
+                HistoryPayload::Metadata { .. } => {
+                    stats.metadata_count += 1;
+                }
+            }
+        }
+        stats.distinct_devices = devices.len();
+        stats
+    }
+
+    /// Filtered history list supporting kind, device, date range, tag, and pinned-only filters.
+    /// Results are returned most-recent first.
+    pub fn filter<'a>(&'a self, q: &'a HistoryFilter) -> impl Iterator<Item = &'a HistoryEntry> {
+        let kind = q.kind.as_deref().map(|s| s.to_lowercase());
+        let device = q.device.as_deref().map(|s| s.to_lowercase());
+        let tag = q.tag.as_deref().map(|s| s.to_lowercase());
+        let from_secs = q.from_secs;
+        let to_secs = q.to_secs;
+        let pinned_only = q.pinned_only;
+        let limit = q.limit.unwrap_or(usize::MAX);
+
+        self.entries
+            .iter()
+            .rev()
+            .filter(move |e| {
+                if let Some(ref k) = kind {
+                    if e.kind() != k.as_str() {
+                        return false;
+                    }
+                }
+                if let Some(ref d) = device {
+                    if !e.source_device.to_lowercase().contains(d.as_str()) {
+                        return false;
+                    }
+                }
+                if let Some(from) = from_secs {
+                    if e.timestamp < from {
+                        return false;
+                    }
+                }
+                if let Some(to) = to_secs {
+                    if e.timestamp > to {
+                        return false;
+                    }
+                }
+                if let Some(ref t) = tag {
+                    if !e.tags.iter().any(|et| et == t) {
+                        return false;
+                    }
+                }
+                if pinned_only && !e.pinned {
+                    return false;
+                }
+                true
+            })
+            .take(limit)
+    }
+
+    /// Export history as a JSON array string (most-recent first).
+    pub fn export_json(&self) -> Result<String> {
+        let entries: Vec<&HistoryEntry> = self.entries.iter().rev().collect();
+        serde_json::to_string_pretty(&entries).context("serialising history to JSON")
+    }
+
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
     pub fn remove(&mut self, id: u64) -> Result<bool> {
         let len_before = self.entries.len();
         self.entries.retain(|entry| entry.id != id);
@@ -599,3 +803,197 @@ mod tests {
         // Commas inside text should be quoted in the preview column.
         assert!(lines[1].contains("text"));
     }
+<<<<<<< HEAD
+=======
+
+    // ── New functionality tests ───────────────────────────────────────────────
+
+    #[test]
+    fn tags_add_and_remove() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("tagged item".into()), "dev".into(), 1024)
+            .unwrap();
+        let id = history.entries().back().unwrap().id;
+
+        // Add a tag.
+        assert!(history.add_tag(id, "work").unwrap());
+        assert!(!history.add_tag(id, "work").unwrap()); // duplicate
+
+        // Verify it persisted.
+        let reloaded = History::load_with_limit(tmp.path(), 50).unwrap();
+        let entry = reloaded.get(id).unwrap();
+        assert!(entry.tags.contains(&"work".to_string()));
+
+        // Remove tag.
+        let mut h2 = History::load_with_limit(tmp.path(), 50).unwrap();
+        assert!(h2.remove_tag(id, "work").unwrap());
+        assert!(!h2.remove_tag(id, "work").unwrap()); // already gone
+    }
+
+    #[test]
+    fn tags_are_stored_lowercase() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("hello".into()), "dev".into(), 1024)
+            .unwrap();
+        let id = history.entries().back().unwrap().id;
+        history.add_tag(id, "WORK").unwrap();
+        let entry = history.get(id).unwrap();
+        assert!(entry.tags.contains(&"work".to_string()));
+    }
+
+    #[test]
+    fn stats_counts_correctly() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("hello".into()), "iPhone".into(), 1024)
+            .unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("world".into()), "MacBook".into(), 1024)
+            .unwrap();
+        history
+            .push_with_options(
+                &ClipboardContent::Image { mime: "image/png".into(), data: vec![0u8; 512] },
+                "iPhone".into(),
+                1024,
+            )
+            .unwrap();
+
+        // Pin one entry.
+        let first_id = history.entries().front().unwrap().id;
+        history.set_pinned(first_id, true).unwrap();
+
+        let stats = history.stats();
+        assert_eq!(stats.total, 3);
+        assert_eq!(stats.text_count, 2);
+        assert_eq!(stats.image_count, 1);
+        assert_eq!(stats.pinned_count, 1);
+        assert_eq!(stats.distinct_devices, 2);
+        assert!(stats.total_image_bytes > 0);
+    }
+
+    #[test]
+    fn filter_by_kind() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("text item".into()), "dev".into(), 1024)
+            .unwrap();
+        history
+            .push_with_options(
+                &ClipboardContent::Image { mime: "image/png".into(), data: vec![1, 2, 3] },
+                "dev".into(),
+                1024,
+            )
+            .unwrap();
+
+        let q = HistoryFilter { kind: Some("text".into()), ..Default::default() };
+        let results: Vec<_> = history.filter(&q).collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].kind(), "text");
+    }
+
+    #[test]
+    fn filter_by_device() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("a".into()), "iPhone".into(), 1024)
+            .unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("b".into()), "MacBook".into(), 1024)
+            .unwrap();
+
+        let q = HistoryFilter { device: Some("iphone".into()), ..Default::default() };
+        let results: Vec<_> = history.filter(&q).collect();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].source_device, "iPhone");
+    }
+
+    #[test]
+    fn filter_pinned_only() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        for i in 0..3 {
+            history
+                .push_with_options(
+                    &ClipboardContent::Text(format!("item {}", i)),
+                    "dev".into(),
+                    1024,
+                )
+                .unwrap();
+        }
+        let id = history.entries().front().unwrap().id;
+        history.set_pinned(id, true).unwrap();
+
+        let q = HistoryFilter { pinned_only: true, ..Default::default() };
+        let results: Vec<_> = history.filter(&q).collect();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].pinned);
+    }
+
+    #[test]
+    fn filter_by_tag() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("tagged".into()), "dev".into(), 1024)
+            .unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("untagged".into()), "dev".into(), 1024)
+            .unwrap();
+        let tagged_id = history.entries().front().unwrap().id;
+        history.add_tag(tagged_id, "important").unwrap();
+
+        let q = HistoryFilter { tag: Some("important".into()), ..Default::default() };
+        let results: Vec<_> = history.filter(&q).collect();
+        assert_eq!(results.len(), 1);
+        assert!(results[0].tags.contains(&"important".to_string()));
+    }
+
+    #[test]
+    fn filter_limit_respected() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        for i in 0..10 {
+            history
+                .push_with_options(
+                    &ClipboardContent::Text(format!("item {}", i)),
+                    "dev".into(),
+                    1024,
+                )
+                .unwrap();
+        }
+        let q = HistoryFilter { limit: Some(3), ..Default::default() };
+        let results: Vec<_> = history.filter(&q).collect();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn export_json_round_trips() {
+        let tmp = NamedTempFile::new().unwrap();
+        let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
+        history
+            .push_with_options(&ClipboardContent::Text("json test".into()), "dev".into(), 1024)
+            .unwrap();
+
+        let json_str = history.export_json().unwrap();
+        let parsed: Vec<serde_json::Value> = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0]["source_device"].as_str().unwrap(), "dev");
+    }
+
+    #[test]
+    fn max_entries_bumped_to_500() {
+        // Verify the new MAX_ENTRIES constant allows up to 500.
+        assert_eq!(MAX_ENTRIES, 500);
+        let tmp = NamedTempFile::new().unwrap();
+        let history = History::load_with_limit(tmp.path(), 500).unwrap();
+        assert_eq!(history.entries().len(), 0); // empty, just checks no panic
+    }
+}
+>>>>>>> 546e515 (feat: implement architectural improvements and synchronize core assets)
