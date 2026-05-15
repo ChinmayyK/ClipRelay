@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.ClipRelay" parent="Theme.AppCompat.Light.NoActionBar">
+        <item name="colorPrimary">@color/cr_accent</item>
+        <item name="colorPrimaryDark">@color/cr_accent</item>
+        <item name="colorAccent">@color/cr_accent</item>
+        <item name="android:windowBackground">@color/cr_bg</item>
+        <item name="android:statusBarColor">@color/cr_bg</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/cr_nav_bg</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+
+    <style name="Theme.ClipRelay.Dialog" parent="Theme.AppCompat.Light.Dialog">
+        <item name="colorPrimary">@color/cr_accent</item>
+        <item name="colorAccent">@color/cr_accent</item>
+        <item name="android:windowBackground">@color/cr_card</item>
+    </style>
+</resources>

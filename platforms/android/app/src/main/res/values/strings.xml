@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ClipRelay</string>
+
+    <!-- Service notification channels -->
+    <string name="notif_channel_service_name">ClipRelay</string>
+    <string name="notif_channel_service_desc">Background sync indicator — silent, no banner</string>
+    <string name="notif_channel_alerts_name">ClipRelay Alerts</string>
+    <string name="notif_channel_alerts_desc">Trust requests, received files, and connection failures</string>
+
+    <!-- Persistent notification -->
+    <string name="notif_service_title">ClipRelay</string>
+    <string name="notif_service_active">Syncing</string>
+    <string name="notif_service_paused">Sync paused — tap to manage</string>
+    <string name="notif_action_pause">Pause sync</string>
+    <string name="notif_action_resume">Resume sync</string>
+    <string name="notif_action_disconnect">Disconnect all</string>
+
+    <!-- Pairing screen -->
+    <string name="pairing_request_eyebrow">Pairing request</string>
+    <string name="pairing_wants_to_join">wants to join your clipboard network</string>
+    <string name="pairing_pin_label">Verbal confirmation code</string>
+    <string name="pairing_pin_hint">Read this aloud to confirm you\'re pairing with the right device</string>
+    <string name="pairing_fingerprint_label">Device fingerprint</string>
+    <string name="pairing_fingerprint_hint">Verify in desktop app</string>
+    <string name="pairing_deny">Deny</string>
+    <string name="pairing_trust">Trust Device</string>
+    <string name="pairing_timeout">Request timed out</string>
+
+    <!-- File received -->
+    <string name="file_received_title">File received</string>
+    <string name="file_received_from">Received from %1$s</string>
+    <string name="file_saved_to">Saved to Downloads/ClipRelay</string>
+
+    <!-- Dashboard -->
+    <string name="status_stopped">Stopped</string>
+    <string name="status_paused">Sync paused</string>
+    <string name="status_waiting">No devices nearby</string>
+    <string name="start_sync">Start sync</string>
+    <string name="restart_sync">Restart sync</string>
+
+    <!-- Feed -->
+    <string name="feed_title">Activity</string>
+    <string name="feed_empty_title">No activity yet</string>
+    <string name="feed_empty_desc">Clipboard syncs, file transfers, and connection events will appear here.</string>
+    <string name="feed_search_hint">Search activity\u2026</string>
+
+    <!-- Settings -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_subtitle">Manage sync, notifications, and your device identity.</string>
+    <string name="settings_renamed_toast">Renamed to \u201c%1$s\u201d</string>
+    <string name="settings_battery_manual">Open Settings \u2192 Battery \u2192 ClipRelay \u2192 disable optimisation</string>
+
+    <!-- Quick Settings tile -->
+    <string name="tile_label">ClipRelay</string>
+    <string name="tile_subtitle_paused">Paused</string>
+    <string name="tile_subtitle_no_devices">No devices</string>
+    <string name="tile_enabled_toast">ClipRelay sync enabled</string>
+    <string name="tile_paused_toast">ClipRelay sync paused</string>
+
+    <!-- Share target -->
+    <string name="share_pushed">Pushed to ClipRelay peers</string>
+    <string name="share_nothing">Nothing to push</string>
+</resources>
