@@ -22,8 +22,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         bindStore()
         registerHotKeys()
         registerSleepWakeObservers()
+        registerStoreNotifications()
         store.start()
         openDashboard()
+    }
+
+    /// Observe notifications posted by ClipRelayStore so it stays decoupled from AppKit.
+    private func registerStoreNotifications() {
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(openQuickAccess),
+            name: .clipRelayOpenHistoryPanel,
+            object: nil
+        )
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -128,6 +139,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             .store(in: &cancellables)
 
+        // Badge the menu bar icon when clipboard items are waiting to be applied.
+        // Shows a red dot overlay when count > 0 so the user knows something arrived
+        // without needing to open the dashboard.
+        store.$pendingClipboardCount
+            .receive(on: RunLoop.main)
+            .sink { [weak self] count in
+                self?.updateMenuBarBadge(pendingCount: count)
+            }
+            .store(in: &cancellables)
+
         store.$quickSendContext
             .dropFirst()
             .sink { [weak self] context in
@@ -176,6 +197,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Nothing to do — the Rust engine handles clean peer shutdown on sleep.
         // We just log for diagnosability.
         NSLog("ClipRelay: system going to sleep")
+    }
+
+    // MARK: - Menu bar badge
+
+    /// Overlays a small red dot on the status-bar icon when `pendingCount > 0`.
+    /// Drawn directly onto a composited NSImage so no extra views are needed.
+    private func updateMenuBarBadge(pendingCount: Int) {
+        guard let button = statusItem.button else { return }
+
+        let baseImage: NSImage
+        if let img = NSImage(named: "StatusBarTemplate") {
+            baseImage = img.copy() as! NSImage
+        } else {
+            button.title = pendingCount > 0 ? "CR●" : "CR"
+            return
+        }
+
+        guard pendingCount > 0 else {
+            button.image = baseImage
+            button.imageScaling = .scaleProportionallyUpOrDown
+            button.toolTip = "ClipRelay"
+            return
+        }
+
+        let size = baseImage.size
+        let badged = NSImage(size: size)
+        badged.lockFocus()
+        baseImage.draw(in: NSRect(origin: .zero, size: size))
+
+        let dotSize: CGFloat = size.height * 0.38
+        let dotRect = CGRect(
+            x: size.width - dotSize - 0.5,
+            y: size.height - dotSize - 0.5,
+            width: dotSize, height: dotSize
+        )
+
+        NSColor.systemRed.setFill()
+        NSBezierPath(ovalIn: dotRect).fill()
+
+        if pendingCount > 1 {
+            let label = pendingCount < 10 ? "\(pendingCount)" : "+"
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: dotSize * 0.68, weight: .bold),
+                .foregroundColor: NSColor.white
+            ]
+            let str = NSAttributedString(string: label, attributes: attrs)
+            let s = str.size()
+            str.draw(at: CGPoint(x: dotRect.midX - s.width / 2, y: dotRect.midY - s.height / 2))
+        }
+
+        badged.unlockFocus()
+        badged.isTemplate = false
+        button.image = badged
+        button.imageScaling = .scaleProportionallyUpOrDown
+        button.toolTip = "ClipRelay • \(pendingCount) clipboard item\(pendingCount == 1 ? "" : "s") waiting — click to apply"
     }
 
     // MARK: - Hot keys

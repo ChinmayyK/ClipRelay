@@ -5,6 +5,15 @@
 import Foundation
 import Combine
 import AppKit
+import ServiceManagement
+
+// MARK: - Notification names
+
+extension Notification.Name {
+    /// Posted by ClipRelayStore.openHistoryPanel() — observed by AppDelegate.
+    static let clipRelayOpenHistoryPanel = Notification.Name("com.cliprelay.openHistoryPanel")
+}
+import AppKit
 
 @MainActor
 final class ClipRelayStore: ObservableObject {
@@ -15,6 +24,11 @@ final class ClipRelayStore: ObservableObject {
     @Published var isRunning: Bool = false
     @Published var statusLine: String = "Starting…"
     @Published var connectedCount: Int = 0
+    /// Number of remote clipboard items pending apply — badges the menu bar icon.
+    @Published var pendingClipboardCount: Int = 0
+    /// This Mac's public-key fingerprint — shown in Security pane for peer verification.
+    /// Populated from the daemon status response; nil until first successful poll.
+    @Published var localFingerprint: String? = nil
 
     // ── Activity feed ─────────────────────────────────────────────────────────
     @Published var activityFeed: [IpcActivityEntry] = []
@@ -55,8 +69,72 @@ final class ClipRelayStore: ObservableObject {
 
     // MARK: - Lifecycle
 
-    func start() { startPolling() }
-    func stop()  { pollTimer?.invalidate(); pollTimer = nil }
+    // ── Clipboard watcher ─────────────────────────────────────────────────────
+    // Polls NSPasteboard on a background thread and fires callbacks on change.
+    // ClipboardSetter prevents echo: applying a received clipboard increments
+    // suppressCount so the watcher skips that event and doesn't re-push it.
+    private let watcher = ClipboardWatcher()
+    private lazy var setter = ClipboardSetter(watcher: watcher)
+
+    func start() {
+        startPolling()
+        startWatchingClipboard()
+    }
+
+    func stop() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+        watcher.stop()
+    }
+
+    // ── Clipboard watcher setup ───────────────────────────────────────────────
+
+    private func startWatchingClipboard() {
+        watcher.onTextChange = { [weak self] text in
+            self?.handleLocalClipboardText(text)
+        }
+        watcher.onImageChange = { [weak self] data, mimeType in
+            self?.handleLocalClipboardImage(data, mimeType: mimeType)
+        }
+        watcher.onFileChange = { [weak self] url in
+            self?.handleLocalClipboardFile(url)
+        }
+        watcher.start()
+    }
+
+    /// User copied text — update quick-send strip and push to peers if connected.
+    private func handleLocalClipboardText(_ text: String) {
+        // Always update the quick-send strip (shown in history panel).
+        quickSendContext = QuickSendContext(text: text, timestamp: Date())
+        guard connectedCount > 0 else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            // push_clipboard tells the daemon to read the OS clipboard itself —
+            // avoids double-reading and handles large text more safely than inlining.
+            _ = try? await self.ipc.send(cmd: ["cmd": "push_clipboard"])
+        }
+    }
+
+    private func handleLocalClipboardImage(_ data: Data, mimeType: String) {
+        guard connectedCount > 0 else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            _ = try? await self.ipc.send(cmd: [
+                "cmd":      "push_clipboard_image",
+                "mime":     mimeType,
+                "data_b64": data.base64EncodedString(),
+            ])
+        }
+    }
+
+    private func handleLocalClipboardFile(_ url: URL) {
+        guard connectedCount > 0 else { return }
+        sendFile(url: url)
+    }
+
+    /// Apply received clipboard text locally without triggering the watcher callback.
+    func applyClipboardLocally(text: String) { setter.setText(text) }
+    func applyClipboardImageLocally(_ data: Data, mimeType: String) { setter.setImage(data, mimeType: mimeType) }
 
     /// Adaptive poll rate:
     ///  • 0.25 s when peers are connected — near-instant sync feedback in the UI
@@ -87,6 +165,8 @@ final class ClipRelayStore: ObservableObject {
                 ? "Ready — no devices nearby"
                 : "\(connectedCount) device\(connectedCount == 1 ? "" : "s") connected"
             peers = s.peers.map { makePeerViewModel($0) }
+            pendingClipboardCount = s.pending_clipboard_count ?? 0
+            if let fp = s.local_fingerprint { localFingerprint = fp }
             dashboardStatus = StatusSnapshot(
                 peerCount:    connectedCount,
                 trustedCount: s.peers.filter { $0.trusted }.count,
@@ -95,9 +175,6 @@ final class ClipRelayStore: ObservableObject {
                 syncEnabled:  true,
                 daemonVersion: nil
             )
-            // Incrementally fetch new activity-feed entries on every poll tick.
-            // This keeps the timeline current without a full reload each time.
-            // On first run (lastActivityId == 0) the view's .task does a full fetch.
             if lastActivityId > 0 {
                 await pollActivityFeedIncremental()
             }
@@ -149,9 +226,22 @@ final class ClipRelayStore: ObservableObject {
         let addr = manualConnectAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !addr.isEmpty else { return }
         Task {
-            try? await ipc.connectManual(address: addr)
-            await refresh()
-            showToast(title: "Connecting…", body: addr, tint: PBTheme.accentBlue)
+            do {
+                try await ipc.connectManual(address: addr)
+                manualConnectAddress = ""
+                showToast(title: "Connecting…", body: "Initiated connection to \(addr)", tint: CRTheme.accentBlue)
+                // Poll a few times to pick up the peer once the handshake completes.
+                try? await Task.sleep(nanoseconds: 800_000_000)
+                await refresh()
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                await refresh()
+            } catch {
+                showToast(
+                    title: "Connection failed",
+                    body: error.localizedDescription,
+                    tint: CRTheme.accentRed
+                )
+            }
         }
     }
 
@@ -174,18 +264,42 @@ final class ClipRelayStore: ObservableObject {
         Task { try? await ipc.rejectTrust(deviceId: prompt.deviceId); activeTrustPrompt = nil }
     }
 
+    // MARK: - Device discovery
+
+    /// Trigger a fresh NSD/mDNS scan. The daemon re-registers its advertisement
+    /// and re-starts discovery, picking up any peers that came online recently.
+    func scanForDevices() {
+        Task {
+            try? await ipc.send(cmd: ["cmd": "rescan_peers"])
+            // Give discovery 1.5 s to find peers, then refresh the peer list.
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await refresh()
+            showToast(title: "Scan complete", body: "Refreshed peer list", tint: CRTheme.accentBlue)
+        }
+    }
+
+    /// Reject all currently-untrusted device requests in one action.
+    func rejectAll() {
+        let untrusted = devices.filter { $0.trustState == .untrusted }
+        guard !untrusted.isEmpty else { return }
+        Task {
+            for device in untrusted {
+                try? await ipc.rejectTrust(deviceId: device.id)
+            }
+            await refresh()
+            showToast(title: "Rejected \(untrusted.count)", body: "All pending requests dismissed", tint: CRTheme.accentRed)
+        }
+    }
+
     // MARK: - Timeline
 
+    /// Copy item text to pasteboard without marking it applied.
+    /// Apply is a separate explicit action (the Apply button / context menu).
     func copyTimelineItem(_ item: TimelineItem) {
         if let text = item.fullText {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
-            showToast(title: "Copied", body: String(text.prefix(50)), tint: PBTheme.accentGreen)
-        }
-        Task {
-            if let entry = activityFeed.first(where: { $0.id == item.id }) {
-                await applyClipboard(entry: entry)
-            }
+            showToast(title: "Copied", body: String(text.prefix(60)), tint: CRTheme.accentGreen)
         }
     }
 
@@ -195,7 +309,7 @@ final class ClipRelayStore: ObservableObject {
                   let hash = entry.content_hash else { return }
             try? await ipc.sendClipboardByHash(hash: hash, targetDeviceId: device?.id)
             let target = device?.name ?? "all devices"
-            showToast(title: "Sent", body: "Clipboard sent to \(target)", tint: PBTheme.accentBlue)
+            showToast(title: "Sent", body: "Clipboard sent to \(target)", tint: CRTheme.accentBlue)
         }
     }
 
@@ -208,32 +322,55 @@ final class ClipRelayStore: ObservableObject {
         pinnedItemIds.remove(item.id)
     }
 
+    /// Synthesise a minimal feed entry from a legacy TimelineEntry.
+    /// Uses JSON round-trip via the custom Codable init so we don't need a
+    /// memberwise initialiser on IpcActivityEntry.
     func addTimelineEntry(_ entry: TimelineEntry) {
-        // Legacy: synthesise a minimal IpcActivityEntry and prepend
-        let synthetic = IpcActivityEntry(
-            id: Int64(Date().timeIntervalSince1970 * 1000),
-            timestamp_ms: Int64(entry.timestamp.timeIntervalSince1970 * 1000),
-            device_id: "",
-            device_name: entry.deviceName,
-            kind: entry.kind.rawValue,
-            summary: entry.preview,
-            content_hash: nil,
-            text_preview: entry.preview,
-            file_name: nil,
-            file_bytes: nil,
-            transfer_id: nil,
-            applied_locally: false,
-            relay_path: []
-        )
+        let dict: [String: Any] = [
+            "id":             Int64(Date().timeIntervalSince1970 * 1000),
+            "timestamp_ms":   Int64(entry.timestamp.timeIntervalSince1970 * 1000),
+            "device_id":      "",
+            "device_name":    entry.deviceName,
+            "kind":           entry.kind.rawValue,
+            "summary":        entry.preview,
+            "text_preview":   entry.preview,
+            "applied_locally": false,
+            "relay_path":     [String]()
+        ]
+        guard
+            let data    = try? JSONSerialization.data(withJSONObject: dict),
+            let synthetic = try? JSONDecoder().decode(IpcActivityEntry.self, from: data)
+        else { return }
         activityFeed.insert(synthetic, at: 0)
         if activityFeed.count > 200 { activityFeed.removeLast() }
     }
 
+    // MARK: - Command palette actions
+
+    /// Toggle sync on/off — used by command palette ⌘K and menu bar.
+    func toggleSync() {
+        guard var s = settings else { return }
+        s.syncEnabled = !s.syncEnabled
+        saveSettings(s)
+        let state = s.syncEnabled ? "resumed" : "paused"
+        showToast(title: "Sync \(state)", body: s.syncEnabled
+            ? "Clipboard sync is now active"
+            : "Clipboard sync paused — no events will be forwarded",
+            tint: s.syncEnabled ? CRTheme.accentGreen : CRTheme.accentOrange)
+    }
+
+    /// Open the Quick Access history panel — triggered by command palette.
+    func openHistoryPanel() {
+        // Post a notification that AppDelegate listens to — keeps store decoupled from UI.
+        NotificationCenter.default.post(name: .clipRelayOpenHistoryPanel, object: nil)
+    }
+
+    /// Send the current local clipboard to all (or one) connected peer.
     func sendCurrentClipboard(to device: ManagedDevice?) {
         Task {
             try? await ipc.sendClipboardCurrent(targetDeviceId: device?.id)
             let target = device?.name ?? "all devices"
-            showToast(title: "Sent", body: "Clipboard sent to \(target)", tint: PBTheme.accentBlue)
+            showToast(title: "Sent", body: "Clipboard sent to \(target)", tint: CRTheme.accentBlue)
         }
     }
 
@@ -257,6 +394,9 @@ final class ClipRelayStore: ObservableObject {
                 if activityFeed.count > 200 { activityFeed = Array(activityFeed.prefix(200)) }
                 lastActivityId = newEntries.map(\.id).max() ?? lastActivityId
             }
+            // Keep pendingClipboardCount in sync with local feed state.
+            // This stays accurate between status() polls (which happen less often when idle).
+            pendingClipboardCount = activityFeed.filter { $0.isApplicable }.count
         } catch {}
     }
 
@@ -269,6 +409,12 @@ final class ClipRelayStore: ObservableObject {
             try await ipc.applyClipboard(contentHash: hash)
             if let idx = activityFeed.firstIndex(where: { $0.id == entry.id }) {
                 activityFeed[idx].applied_locally = true
+            }
+            // Decrement immediately so the menu bar badge updates without waiting for next poll.
+            pendingClipboardCount = max(0, pendingClipboardCount - 1)
+            // Apply to local pasteboard via ClipboardSetter (suppresses echo back to peers).
+            if let text = entry.text_preview {
+                applyClipboardLocally(text: text)
             }
         } catch {}
     }
@@ -289,8 +435,31 @@ final class ClipRelayStore: ObservableObject {
 
     func saveSettings(_ snapshot: ClipRelaySettingsSnapshot) {
         settings = snapshot
-        Task { try? await ipc.saveSettings(snapshot); await refresh() }
-        showToast(title: "Settings saved", body: "Changes applied to daemon", tint: PBTheme.accentGreen)
+        // startOnLogin is OS-level (LaunchAgent) — handle separately from daemon settings.
+        applyLoginItemState(enabled: snapshot.startOnLogin)
+        Task {
+            do {
+                try await ipc.saveSettings(snapshot)
+                await refresh()
+                showToast(title: "Settings saved", body: "Changes applied", tint: CRTheme.accentGreen)
+            } catch {
+                showToast(title: "Save failed", body: error.localizedDescription, tint: CRTheme.accentRed)
+            }
+        }
+    }
+
+    /// Registers/unregisters ClipRelay as a login item via SMAppService (macOS 13+).
+    private func applyLoginItemState(enabled: Bool) {
+        if #available(macOS 13.0, *) {
+            let svc = SMAppService.mainApp
+            do {
+                if enabled  { if svc.status != .enabled  { try svc.register()   } }
+                else        { if svc.status == .enabled  { try svc.unregister() } }
+            } catch {
+                NSLog("ClipRelay: login item \(enabled ? "register" : "unregister") error: \(error)")
+            }
+        }
+    }
     }
 
     // MARK: - Command palette

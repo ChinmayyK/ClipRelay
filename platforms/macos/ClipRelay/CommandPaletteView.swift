@@ -46,9 +46,17 @@ struct CommandPaletteView: View {
                     tint: CRTheme.accentBlue)
                 { store.sendCurrentClipboard(to: nil) },
 
-                cmd(id: "clip.history", icon: "doc.on.clipboard",
-                    label: "Open History Panel",
-                    hint: "Browse and copy from clipboard history",
+                // Per-device send commands — dynamically generated from connected peers.
+            ] + store.connectedDevices.map { device in
+                cmd(id: "clip.send.\(device.id)", icon: "paperplane",
+                    label: "Send to \(device.name)",
+                    hint: "Push current clipboard only to \(device.name)",
+                    tint: CRTheme.accentMint)
+                { store.sendCurrentClipboard(to: device) }
+            } + [
+                cmd(id: "clip.history", icon: "clock.arrow.circlepath",
+                    label: "Open Clipboard History",
+                    hint: "Quick Access panel — search, pin, and re-send past items",
                     tint: CRTheme.brandElectric)
                 { store.openHistoryPanel() },
             ]),
@@ -56,7 +64,7 @@ struct CommandPaletteView: View {
             PaletteGroup(title: "Network", commands: [
                 cmd(id: "net.connect", icon: "network",
                     label: "Manual Connect…",
-                    hint: "Connect to a peer by IP address and port",
+                    hint: "Connect to a peer by IP address or hostname",
                     tint: CRTheme.accentMint)
                 { store.selectedSection = .devices },
 
@@ -75,7 +83,26 @@ struct CommandPaletteView: View {
                     tint: CRTheme.accentTeal)
                 { store.scanForDevices() },
             ]),
-        ]
+
+            // Recent clipboard items as directly-runnable commands.
+            // Filtered out when query is empty to keep the default list clean.
+        ] + (query.isEmpty ? [] : [
+            PaletteGroup(title: "Clipboard History", commands:
+                store.timeline
+                    .filter { $0.fullText != nil }
+                    .prefix(8)
+                    .map { item in
+                        let preview = item.title.prefix(60).description
+                        return cmd(
+                            id: "hist.\(item.id)",
+                            icon: "doc.on.clipboard",
+                            label: preview,
+                            hint: "From \(item.sourceDevice) · \(item.timestamp.relativeTimeString())",
+                            tint: CRTheme.brandElectric
+                        ) { store.copyTimelineItem(item) }
+                    }
+            ),
+        ])
     }
 
     // ── Filtering ─────────────────────────────────────────────────────────────

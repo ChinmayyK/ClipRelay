@@ -668,7 +668,14 @@ class MainActivity : AppCompatActivity() {
 
             addView(hSpace(12))
 
-            // Name + status
+            // Name + status + last-sync
+            val lastSync = prefs().getLong("last_sync_${name.take(32)}", 0L)
+            val statusSub = when {
+                !online    -> "Offline"
+                lastSync > 0 -> "Syncing · Last ${relativeTime(lastSync)}"
+                else       -> "Syncing · Noise encrypted"
+            }
+
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 layoutParams = LinearLayout.LayoutParams(0,
@@ -695,7 +702,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     })
                     addView(TextView(this@MainActivity).apply {
-                        text = if (online) "Syncing · Noise encrypted" else "Offline"
+                        text = statusSub
                         textSize = 12.5f
                         setTextColor(if (online) cr(R.color.cr_green) else cr(R.color.cr_text_3))
                     })
@@ -715,7 +722,24 @@ class MainActivity : AppCompatActivity() {
         secondaryActionsContainer.removeAllViews()
         if (!running) return
 
+        val peers = prefs().getStringSet("connected_names", emptySet())
+            ?.filter { it.isNotBlank() }.orEmpty()
+
         val items = buildList {
+            // "Send clipboard" — most common cross-device action, shown first when connected.
+            // Sends the current Android clipboard text to all paired Macs.
+            if (peers.isNotEmpty() && syncOn) {
+                add(Triple("Send clipboard to Mac", cr(R.color.cr_accent)) {
+                    val cm = getSystemService(ClipboardManager::class.java)
+                    val clip = cm.primaryClip?.getItemAt(0)?.coerceToText(this@MainActivity)
+                    if (clip.isNullOrBlank()) {
+                        showSnack("Clipboard is empty")
+                    } else {
+                        sendAction(ClipRelayService.ACTION_PUSH_CLIPBOARD)
+                        showSnack("Sending clipboard…")
+                    }
+                })
+            }
             val toggleLabel  = if (syncOn) "Pause sync" else "Resume sync"
             val toggleAction = if (syncOn) ClipRelayService.ACTION_PAUSE_SYNC
                                else        ClipRelayService.ACTION_RESUME_SYNC
@@ -900,9 +924,25 @@ class MainActivity : AppCompatActivity() {
             addView(feedContainer)
         }
 
+        // Pull-to-refresh: wraps the feed scroll view.
+        // On refresh: triggers a manual service status broadcast and rebuilds the feed.
+        val swipeRefresh = androidx.swiperefreshlayout.widget.SwipeRefreshLayout(this@MainActivity).apply {
+            setColorSchemeColors(cr(R.color.cr_accent))
+            setProgressBackgroundColorSchemeColor(cr(R.color.cr_bg_card))
+            addView(feedScroller, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.MATCH_PARENT))
+            setOnRefreshListener {
+                sendBroadcast(Intent(ClipRelayService.ACTION_STATUS_CHANGED)
+                    .setPackage(packageName))
+                rebuildFeed()
+                isRefreshing = false
+            }
+        }
+
         addView(feedEmptyState, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-        addView(feedScroller, LinearLayout.LayoutParams(
+        addView(swipeRefresh, LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         feedEmptyState.visibility = View.GONE
     }
@@ -1001,12 +1041,55 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private fun buildFeedRow(entry: ActivityEntry): LinearLayout =
-        LinearLayout(this).apply {
+    private fun buildFeedRow(entry: ActivityEntry): LinearLayout {
+        // Per-row expand state — false by default, toggled by tap on preview block.
+        var isExpanded = false
+
+        return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(cr(R.color.cr_bg_card))
             isClickable = true; isFocusable = true
             background = ripple(cr(R.color.cr_ripple), cr(R.color.cr_bg_card))
+
+            // ── Long-press: context menu ──────────────────────────────────────
+            setOnLongClickListener {
+                val items = buildList {
+                    if (entry.preview.isNotBlank()) {
+                        add("Copy text" to {
+                            val cm = getSystemService(ClipboardManager::class.java)
+                            cm.setPrimaryClip(ClipData.newPlainText("ClipRelay", entry.preview))
+                            showSnack("Copied to clipboard")
+                        })
+                        if (entry.preview.length > 5) {
+                            add("Share…" to {
+                                startActivity(Intent.createChooser(
+                                    Intent(Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(Intent.EXTRA_TEXT, entry.preview)
+                                    }, null))
+                            })
+                        }
+                    }
+                    if (entry.isApplicable) {
+                        add("Apply to clipboard" to {
+                            val svc = Intent(this@MainActivity, ClipRelayService::class.java).apply {
+                                action = ClipRelayService.ACTION_APPLY_CLIPBOARD
+                                if (entry.contentHash.isNotBlank())
+                                    putExtra(ClipRelayService.EXTRA_CONTENT_HASH, entry.contentHash)
+                                putExtra(ClipRelayService.EXTRA_CLIPBOARD_TEXT, entry.preview)
+                            }
+                            ContextCompat.startForegroundService(this@MainActivity, svc)
+                            rebuildFeed()
+                        })
+                    }
+                }
+                if (items.isEmpty()) return@setOnLongClickListener false
+                val labels = items.map { it.first }.toTypedArray()
+                android.app.AlertDialog.Builder(this@MainActivity)
+                    .setItems(labels) { _, i -> items[i].second.invoke() }
+                    .show()
+                true
+            }
 
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -1052,23 +1135,50 @@ class MainActivity : AppCompatActivity() {
                         setLineSpacing(0f, 1.3f)
                     })
 
-                    // Clipboard text preview
+                    // Clipboard text preview — tap to expand up to full 400 chars
                     if (entry.kind == ActivityKind.CLIPBOARD_TEXT && entry.preview.isNotBlank()) {
                         addView(vSpace(7))
-                        addView(TextView(this@MainActivity).apply {
-                            text = entry.preview.take(140)
+                        val previewFull  = entry.preview            // up to 400 chars from engine
+                        val previewShort = previewFull.take(140)
+                        val hasMore      = previewFull.length > 140
+
+                        val previewText = TextView(this@MainActivity).apply {
+                            text = previewShort
                             textSize = 12.5f
                             setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
                             setTextColor(cr(R.color.cr_text_3))
                             maxLines = 3
-                            ellipsize = TextUtils.TruncateAt.END
+                            ellipsize = if (hasMore) TextUtils.TruncateAt.END else null
                             setLineSpacing(0f, 1.4f)
                             setPadding(dp(11), dp(8), dp(11), dp(8))
                             background = GradientDrawable().also {
                                 it.cornerRadius = dp(8).toFloat()
                                 it.setColor(cr(R.color.cr_bg_inset))
                             }
-                        })
+                        }
+                        val expandHint = if (hasMore) TextView(this@MainActivity).apply {
+                            text = "Tap to expand"
+                            textSize = 11f
+                            setTextColor(cr(R.color.cr_text_4))
+                            setPadding(dp(11), 0, 0, 0)
+                        } else null
+
+                        previewText.setOnClickListener {
+                            isExpanded = !isExpanded
+                            if (isExpanded) {
+                                previewText.text    = previewFull
+                                previewText.maxLines = Int.MAX_VALUE
+                                previewText.ellipsize = null
+                                expandHint?.text = "Tap to collapse"
+                            } else {
+                                previewText.text    = previewShort
+                                previewText.maxLines = 3
+                                previewText.ellipsize = if (hasMore) TextUtils.TruncateAt.END else null
+                                expandHint?.text = "Tap to expand"
+                            }
+                        }
+                        addView(previewText)
+                        expandHint?.let { addView(vSpace(3)); addView(it) }
                     }
 
                     // Transfer progress
@@ -1106,6 +1216,7 @@ class MainActivity : AppCompatActivity() {
                 ).also { it.setMargins(dp(68), 0, 0, 0) }
             })
         }
+    }
 
     // Kind badge: square-rounded tile with letter
     private fun buildKindBadge(kind: ActivityKind): FrameLayout {
@@ -1300,7 +1411,8 @@ class MainActivity : AppCompatActivity() {
     private fun relativeTime(ms: Long): String {
         val d = System.currentTimeMillis() - ms
         return when {
-            d < 60_000L     -> "just now"
+            d < 10_000L     -> "just now"
+            d < 60_000L     -> "${d / 1_000}s ago"
             d < 3_600_000L  -> "${d / 60_000}m ago"
             d < 86_400_000L -> "${d / 3_600_000}h ago"
             else            -> "${d / 86_400_000}d ago"
@@ -1312,6 +1424,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun prefs() = getSharedPreferences(ClipRelayService.PREFS_NAME, MODE_PRIVATE)
 
+    /** Brief non-intrusive feedback shown at the bottom of the screen. */
+    private fun showSnack(message: String) =
+        Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+
     private fun launchService() = runCatching {
         ContextCompat.startForegroundService(this,
             Intent(this, ClipRelayService::class.java).apply {
@@ -1319,7 +1435,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sendAction(action: String) = runCatching {
-        startService(Intent(this, ClipRelayService::class.java).apply { this.action = action })
+        ContextCompat.startForegroundService(this,
+            Intent(this, ClipRelayService::class.java).apply { this.action = action })
     }
 
     private fun requestNotificationPermission() {

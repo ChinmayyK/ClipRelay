@@ -229,7 +229,7 @@ class PairingActivity : AppCompatActivity() {
                     LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
             })
             addView(TextView(this@PairingActivity).apply {
-                text = "Verify in desktop app"
+                text = "Tap to copy"
                 textSize = 11.5f
                 setTextColor(cr(R.color.cr_accent))
             })
@@ -237,22 +237,42 @@ class PairingActivity : AppCompatActivity() {
 
         addView(vSpace(12))
 
-        // Formatted fingerprint
-        val formatted = if (fp.isBlank()) "Not provided"
-                        else fp.chunked(2).take(16).joinToString(":")
-        addView(TextView(this@PairingActivity).apply {
+        // Full 32-byte fingerprint grouped into 4 lines of 8 byte pairs.
+        // Empty/short fingerprints fall back to a placeholder.
+        val pairs = if (fp.isBlank()) emptyList()
+                    else fp.replace(":", "").chunked(2)
+        val formatted = if (pairs.isEmpty()) "Not available"
+                        else pairs.chunked(8).joinToString("\n") { it.joinToString(":") }
+
+        val fpView = TextView(this@PairingActivity).apply {
             text = formatted
-            textSize = 13f
+            textSize = 12.5f
             setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
             setTextColor(cr(R.color.cr_text_1))
-            letterSpacing = 0.04f
-            setLineSpacing(0f, 1.6f)
+            letterSpacing = 0.03f
+            setLineSpacing(0f, 1.65f)
             setPadding(dp(12), dp(10), dp(12), dp(10))
             background = GradientDrawable().also {
                 it.cornerRadius = dp(10).toFloat()
                 it.setColor(cr(R.color.cr_bg_inset))
                 it.setStroke(dp(1), cr(R.color.cr_border))
             }
+            isClickable = true; isFocusable = true
+            setOnClickListener {
+                val cm = context.getSystemService(ClipboardManager::class.java)
+                cm.setPrimaryClip(ClipData.newPlainText("fingerprint", fp))
+                text = "Copied!"
+                postDelayed({ text = formatted }, 1_500)
+            }
+        }
+        addView(fpView)
+
+        addView(vSpace(8))
+        addView(TextView(this@PairingActivity).apply {
+            text = "Compare with the fingerprint shown on your Mac's Security settings."
+            textSize = 11.5f
+            setTextColor(cr(R.color.cr_text_3))
+            setLineSpacing(0f, 1.4f)
         })
     }
 

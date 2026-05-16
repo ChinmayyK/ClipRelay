@@ -209,6 +209,7 @@ class ClipRelayService : Service() {
         const val ACTION_PUSH_SHARED_URI    = "com.cliprelay.PUSH_SHARED_URI"
         const val ACTION_STATUS_CHANGED     = "com.cliprelay.STATUS_CHANGED"
         const val ACTION_SETTINGS_CHANGED   = "com.cliprelay.SETTINGS_CHANGED"  // re-read prefs live
+        const val ACTION_PUSH_CLIPBOARD     = "com.cliprelay.PUSH_CLIPBOARD"    // send Android clipboard to peers
         const val ACTION_APPLY_CLIPBOARD    = "com.cliprelay.APPLY_CLIPBOARD"
         const val ACTION_ACCEPT_FILE_TRANSFER = "com.cliprelay.ACCEPT_FILE_TRANSFER"
         const val ACTION_REJECT_FILE_TRANSFER = "com.cliprelay.REJECT_FILE_TRANSFER"
@@ -322,6 +323,31 @@ class ClipRelayService : Service() {
             // Re-read prefs and push them to the engine if possible.
             ACTION_SETTINGS_CHANGED -> {
                 applySettingsToEngine()
+                return START_STICKY
+            }
+
+            // User tapped "Send clipboard to Mac" on the dashboard.
+            ACTION_PUSH_CLIPBOARD -> {
+                val h = engineHandle
+                if (h != 0L) {
+                    val cm   = getSystemService(ClipboardManager::class.java)
+                    val text = cm.primaryClip?.getItemAt(0)
+                        ?.coerceToText(this)?.toString()
+                    if (!text.isNullOrBlank()) {
+                        val result = ClipRelayJni.pushText(h, text)
+                        Log.i(TAG, "PUSH_CLIPBOARD: result=$result len=${text.length}")
+                        if (result == 0) {
+                            addActivity(ActivityEntry(
+                                deviceName = resolvedDeviceName(),
+                                kind       = ActivityKind.CLIPBOARD_TEXT,
+                                preview    = text.take(400)
+                            ))
+                            broadcastActivityUpdated()
+                        }
+                    } else {
+                        Log.w(TAG, "PUSH_CLIPBOARD: clipboard is empty")
+                    }
+                }
                 return START_STICKY
             }
             ACTION_PAUSE_SYNC   -> { setSyncEnabled(false); return START_STICKY }
@@ -575,10 +601,12 @@ class ClipRelayService : Service() {
             ClipRelayJni.CR_EVENT_CLIPBOARD_TEXT -> {
                 val text = ClipRelayJni.eventText(ev) ?: return
                 val from = ClipRelayJni.eventDeviceName(ev) ?: "Unknown"
+                // Track last-sync time per peer so dashboard can show "2m ago"
+                peerLastSync[from] = System.currentTimeMillis()
                 addActivity(ActivityEntry(
                     deviceName = from,
                     kind = ActivityKind.CLIPBOARD_TEXT,
-                    preview = text.take(60).replace('\n', ' '),
+                    preview = text.take(400).replace('\n', ' '),
                     appliedLocally = true
                 ))
                 applyText(text, from)
@@ -588,9 +616,11 @@ class ClipRelayService : Service() {
             ClipRelayJni.CR_EVENT_CLIPBOARD_AVAILABLE -> {
                 val text = ClipRelayJni.eventText(ev) ?: return
                 val from = ClipRelayJni.eventDeviceName(ev) ?: "Unknown"
+                // Track last-sync time per peer
+                peerLastSync[from] = System.currentTimeMillis()
                 val autoApplied = ClipRelayJni.eventAutoApplied(ev) == 1
                 val activityId  = ClipRelayJni.eventActivityId(ev)
-                val preview = text.take(60).replace('\n', ' ')
+                val preview = text.take(400).replace('\n', ' ')
 
                 addActivity(ActivityEntry(
                     id = activityId.takeIf { it >= 0 } ?: System.nanoTime(),
@@ -1550,13 +1580,21 @@ class ClipRelayService : Service() {
 
     // ── Status persistence ────────────────────────────────────────────────────
 
+    // Per-peer last-sync timestamps — written when a clipboard event arrives from each peer.
+    // Key: "last_sync_<peerName>", Value: System.currentTimeMillis() as String.
+    private val peerLastSync = mutableMapOf<String, Long>()
+
     private fun persistStatus() {
-        prefs().edit()
+        val editor = prefs().edit()
             .putString("local_device_name", resolvedDeviceName())
             .putBoolean("peer_connected", connectedPeerNames.isNotEmpty())
             .putInt("connected_count", connectedPeerNames.size)
             .putStringSet("connected_names", connectedPeerNames.toSet())
-            .apply()
+        // Store last-sync times so the dashboard can show "Last sync: 2m ago" per peer.
+        peerLastSync.forEach { (name, ts) ->
+            editor.putLong("last_sync_${name.take(32)}", ts)
+        }
+        editor.apply()
         broadcastStatus()
     }
 

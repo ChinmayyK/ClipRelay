@@ -175,6 +175,50 @@ pub enum IpcRequest {
     GetPeerSettings { device_id: String },
     /// Patch per-peer settings for a specific device (partial JSON).
     PatchPeerSettings { device_id: String, patch: String },
+    /// Re-trigger mDNS/NSD discovery — called by Mac "Scan" button.
+    RescanPeers,
+    /// Connect to a peer by hostname:port (with DNS resolution).
+    /// Used by Mac manual-connect field; `port` defaults to the daemon's
+    /// configured port if omitted.
+    ConnectManual {
+        host: String,
+        #[serde(default)]
+        port: Option<u16>,
+    },
+    /// Re-push a previously-received clipboard item identified by its content hash.
+    /// Optionally restrict to one target device.
+    PushClipboardHash {
+        hash: String,
+        #[serde(default)]
+        target_device_id: Option<String>,
+    },
+    /// Push the current system clipboard to all (or one) peer without providing the text inline.
+    /// The daemon reads the clipboard itself via the platform clipboard API.
+    PushClipboard {
+        #[serde(default)]
+        target_device_id: Option<String>,
+    },
+    /// Persist a full settings snapshot from the Mac preferences UI.
+    SaveSettings {
+        #[serde(default)] port:                             Option<u16>,
+        #[serde(default)] device_name:                      Option<String>,
+        #[serde(default)] sync_enabled:                     Option<bool>,
+        #[serde(default)] sync_text:                        Option<bool>,
+        #[serde(default)] sync_images:                      Option<bool>,
+        #[serde(default)] sync_files:                       Option<bool>,
+        #[serde(default)] history_limit:                    Option<usize>,
+        #[serde(default)] max_history_text_bytes:           Option<usize>,
+        #[serde(default)] max_payload_bytes:                Option<u64>,
+        #[serde(default)] clipboard_poll_ms:                Option<u64>,
+        #[serde(default)] max_pushes_per_sec:               Option<f64>,
+        #[serde(default)] rate_limit_burst:                 Option<f64>,
+        #[serde(default)] smart_sync_duplicate_window_ms:   Option<u64>,
+        #[serde(default)] smart_sync_debounce_ms:           Option<u64>,
+        #[serde(default)] block_sensitive_text:             Option<bool>,
+        #[serde(default)] require_tofu_confirmation:        Option<bool>,
+        #[serde(default)] show_receive_notification:        Option<bool>,
+        #[serde(default)] ignore_patterns:                  Option<Vec<String>>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

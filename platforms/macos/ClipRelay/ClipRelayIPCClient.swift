@@ -23,6 +23,10 @@ struct IpcPeerRecord: Codable {
 struct IpcStatusResponse: Codable {
     let peers: [IpcPeerRecord]
     let last_sync_at: Int?
+    /// Number of remote clipboard items waiting to be applied.
+    let pending_clipboard_count: Int?
+    /// This device's public-key fingerprint (hex) for display in the Security pane.
+    let local_fingerprint: String?
 }
 
 struct IpcResponse<T: Codable>: Codable {
@@ -172,17 +176,9 @@ final class ClipRelayIPCClient {
         return map[ext] ?? "application/octet-stream"
     }
 
-    // ── Transport ─────────────────────────────────────────────────────────────
-    //
-    // Each command opens a fresh Unix socket, sends one JSON line, reads the
-    // response line, then closes.  This keeps the daemon's per-connection
-    // overhead minimal.
-    //
-    // Retry policy: up to 3 attempts with 200 ms between them.  This covers
-    // the common race where the Mac app launches a split-second before the
-    // Rust daemon has bound its socket (e.g. on login-item start).
+    // ── Transport (internal so store can issue ad-hoc commands) ──────────────
 
-    private func send(cmd: [String: Any]) async throws -> Data {
+    func send(cmd: [String: Any]) async throws -> Data {
         var lastError: Error = ClipRelayIPCError.connectionFailed
         for attempt in 0..<3 {
             do {
@@ -255,7 +251,8 @@ enum ClipRelayIPCError: Error {
 extension ClipRelayIPCClient {
 
     /// Initiate an outbound TCP connection to a manually-entered address.
-    /// Address format: "host:port" or bare "host" (uses default port).
+    /// Address format: "host:port" or bare "host" (uses daemon's configured port).
+    /// Daemon resolves DNS — hostname or IP both work.
     func connectManual(address: String) async throws {
         let parts = address.split(separator: ":", maxSplits: 1)
         var cmd: [String: Any] = ["cmd": "connect_manual"]
@@ -268,31 +265,42 @@ extension ClipRelayIPCClient {
         _ = try await send(cmd: cmd)
     }
 
-    /// Push a previously-received clipboard item (identified by hash) to connected peers.
+    /// Re-push a previously-received clipboard item (by hash) to connected peers.
     func sendClipboardByHash(hash: String, targetDeviceId: String?) async throws {
         var cmd: [String: Any] = ["cmd": "push_clipboard_hash", "hash": hash]
         if let id = targetDeviceId { cmd["target_device_id"] = id }
         _ = try await send(cmd: cmd)
     }
 
-    /// Push the current local clipboard content to connected peers.
+    /// Push the current local clipboard to connected peers (daemon reads OS clipboard).
     func sendClipboardCurrent(targetDeviceId: String?) async throws {
         var cmd: [String: Any] = ["cmd": "push_clipboard"]
         if let id = targetDeviceId { cmd["target_device_id"] = id }
         _ = try await send(cmd: cmd)
     }
 
-    /// Persist settings changes to the daemon.
+    /// Persist settings changes to the daemon — partial patch, only set fields are applied.
     func saveSettings(_ snapshot: ClipRelaySettingsSnapshot) async throws {
         let cmd: [String: Any] = [
-            "cmd":            "save_settings",
-            "port":           snapshot.port,
-            "device_name":    snapshot.deviceName,
-            "sync_enabled":   snapshot.syncEnabled,
-            "history_limit":  snapshot.historyLimit,
-            "sync_text":      snapshot.syncText,
-            "sync_images":    snapshot.syncImages,
-            "sync_files":     snapshot.syncFiles,
+            "cmd":                              "save_settings",
+            "port":                             snapshot.port,
+            "device_name":                      snapshot.deviceName,
+            "sync_enabled":                     snapshot.syncEnabled,
+            "sync_text":                        snapshot.syncText,
+            "sync_images":                      snapshot.syncImages,
+            "sync_files":                       snapshot.syncFiles,
+            "history_limit":                    snapshot.historyLimit,
+            "max_history_text_bytes":           snapshot.maxHistoryTextBytes,
+            "max_payload_bytes":                snapshot.maxPayloadBytes,
+            "clipboard_poll_ms":                snapshot.clipboardPollMs,
+            "max_pushes_per_sec":               snapshot.maxPushesPerSec,
+            "rate_limit_burst":                 snapshot.rateLimitBurst,
+            "smart_sync_duplicate_window_ms":   snapshot.smartSyncDuplicateWindowMs,
+            "smart_sync_debounce_ms":           snapshot.smartSyncDebounceMs,
+            "block_sensitive_text":             snapshot.blockSensitiveText,
+            "require_tofu_confirmation":        snapshot.requireTofuConfirmation,
+            "show_receive_notification":        snapshot.showReceiveNotification,
+            "ignore_patterns":                  snapshot.ignorePatterns,
         ]
         _ = try await send(cmd: cmd)
     }

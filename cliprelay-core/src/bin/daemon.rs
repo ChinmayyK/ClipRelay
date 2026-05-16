@@ -312,14 +312,24 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
                 .iter()
                 .filter(|peer| peer.status == PeerConnectionState::Connected)
                 .count();
+            let pending_count = state.engine.pending_remote_clipboards().await.len();
+            let fingerprint   = state.engine.local_fingerprint();
             Ok(IpcResponse::ok(json!({
-                "device_name": settings.resolved_device_name(),
-                "port": settings.port,
-                "sync_enabled": settings.sync_enabled,
-                "peer_count": peer_count,
-                "last_sync_at": snapshot.last_sync_at,
-                "peers": snapshot.peers,
+                "device_name":           settings.resolved_device_name(),
+                "port":                  settings.port,
+                "sync_enabled":          settings.sync_enabled,
+                "peer_count":            peer_count,
+                "last_sync_at":          snapshot.last_sync_at,
+                "peers":                 snapshot.peers,
+                "pending_clipboard_count": pending_count,
+                "local_fingerprint":     fingerprint,
             })))
+        }
+        // Re-trigger mDNS discovery — called by the Mac "Scan" button and
+        // also by the Android NSD retry scheduler when it sends a push.
+        IpcRequest::RescanPeers => {
+            state.engine.rescan_peers().await;
+            Ok(IpcResponse::ok(json!({ "ok": true })))
         }
         IpcRequest::Peers => {
             let snapshot = state.engine.status_snapshot().await;
@@ -347,6 +357,24 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
             })))
         }
         IpcRequest::ConnectPeer { ip, port } => {
+            state.engine.connect_to_peer(ip, port).await?;
+            Ok(IpcResponse::ok_empty())
+        }
+        // ConnectManual: resolve hostname (may be a name, not a bare IP) then connect.
+        IpcRequest::ConnectManual { host, port } => {
+            use std::net::ToSocketAddrs;
+            let default_port = state.settings.lock().await.get().port;
+            let port = port.unwrap_or(default_port);
+            let addr_str = format!("{}:{}", host, port);
+            let ip = tokio::task::spawn_blocking(move || {
+                addr_str.to_socket_addrs()
+                    .ok()
+                    .and_then(|mut it| it.next())
+                    .map(|a| a.ip().to_string())
+            })
+            .await
+            .context("DNS spawn")?
+            .context("could not resolve host")?;
             state.engine.connect_to_peer(ip, port).await?;
             Ok(IpcResponse::ok_empty())
         }
@@ -514,6 +542,80 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
         IpcRequest::PendingRemoteClipboards => Ok(IpcResponse::ok(state.engine.pending_remote_clipboards().await)),
         IpcRequest::ApplyClipboard { content_hash } => {
             state.engine.apply_clipboard_by_hash(content_hash).await?;
+            Ok(IpcResponse::ok_empty())
+        }
+
+        // Re-push a received clipboard item by hash (Mac "Send" button on feed row).
+        IpcRequest::PushClipboardHash { hash, target_device_id } => {
+            let target = target_device_id
+                .as_deref()
+                .map(parse_uuid)
+                .transpose()?
+                .map(SyncTarget::One)
+                .unwrap_or(SyncTarget::All);
+            state.engine.repush_clipboard_hash(hash, target).await?;
+            Ok(IpcResponse::ok_empty())
+        }
+
+        // Push the current local clipboard to peers — daemon reads it from the OS.
+        IpcRequest::PushClipboard { target_device_id } => {
+            let target = target_device_id
+                .as_deref()
+                .map(parse_uuid)
+                .transpose()?
+                .map(SyncTarget::One)
+                .unwrap_or(SyncTarget::All);
+            state.engine.push_current_clipboard(target).await?;
+            Ok(IpcResponse::ok_empty())
+        }
+
+        // Persist a full settings snapshot from the Mac preferences UI.
+        // Every non-None field is patched; unset fields are left unchanged.
+        // Changes take effect immediately on the running engine — no restart needed.
+        IpcRequest::SaveSettings {
+            port, device_name, sync_enabled,
+            sync_text, sync_images, sync_files,
+            history_limit, max_history_text_bytes,
+            max_payload_bytes, clipboard_poll_ms,
+            max_pushes_per_sec, rate_limit_burst,
+            smart_sync_duplicate_window_ms, smart_sync_debounce_ms,
+            block_sensitive_text, require_tofu_confirmation,
+            show_receive_notification, ignore_patterns,
+        } => {
+            let mut patch = serde_json::Map::new();
+            macro_rules! maybe {
+                ($key:expr, $val:expr) => { if let Some(v) = $val { patch.insert($key.into(), json!(v)); } }
+            }
+            maybe!("port",                              port);
+            maybe!("device_name",                       device_name);
+            maybe!("sync_enabled",                      sync_enabled);
+            maybe!("sync_text",                         sync_text);
+            maybe!("sync_images",                       sync_images);
+            maybe!("sync_files",                        sync_files);
+            maybe!("history_limit",                     history_limit);
+            maybe!("max_history_text_bytes",            max_history_text_bytes);
+            maybe!("max_payload_bytes",                 max_payload_bytes);
+            maybe!("clipboard_poll_ms",                 clipboard_poll_ms);
+            maybe!("max_pushes_per_sec",                max_pushes_per_sec);
+            maybe!("rate_limit_burst",                  rate_limit_burst);
+            maybe!("smart_sync_duplicate_window_ms",    smart_sync_duplicate_window_ms);
+            maybe!("smart_sync_debounce_ms",            smart_sync_debounce_ms);
+            maybe!("block_sensitive_text",              block_sensitive_text);
+            maybe!("require_tofu_confirmation",         require_tofu_confirmation);
+            maybe!("show_receive_notification",         show_receive_notification);
+            maybe!("ignore_patterns",                   ignore_patterns);
+
+            let patch_str = serde_json::to_string(&patch)?;
+            let updated = {
+                let mut store = state.settings.lock().await;
+                store.patch(&patch_str)?;
+                store.get().clone()
+            };
+            if let Some(lim) = history_limit {
+                let mut history = state.history.lock().await;
+                let _ = history.set_max_entries(lim);
+            }
+            state.engine.apply_settings(updated).await;
             Ok(IpcResponse::ok_empty())
         }
         IpcRequest::SendFile {

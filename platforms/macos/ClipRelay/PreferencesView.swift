@@ -30,14 +30,25 @@ struct PreferencesView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             // Mark dirty on any meaningful change
-            .onChange(of: copy.deviceName)              { _ in isDirty = true }
-            .onChange(of: copy.syncEnabled)             { _ in isDirty = true }
-            .onChange(of: copy.startOnLogin)            { _ in isDirty = true }
-            .onChange(of: copy.blockSensitiveText)      { _ in isDirty = true }
-            .onChange(of: copy.requireTofuConfirmation) { _ in isDirty = true }
-            .onChange(of: copy.historyLimit)            { _ in isDirty = true }
-            .onChange(of: copy.maxPayloadBytes)         { _ in isDirty = true }
-            .onChange(of: copy.ignorePatterns)          { _ in isDirty = true }
+            .onChange(of: copy.deviceName)                  { _ in isDirty = true }
+            .onChange(of: copy.syncEnabled)                 { _ in isDirty = true }
+            .onChange(of: copy.syncText)                    { _ in isDirty = true }
+            .onChange(of: copy.syncImages)                  { _ in isDirty = true }
+            .onChange(of: copy.syncFiles)                   { _ in isDirty = true }
+            .onChange(of: copy.syncMode)                    { _ in isDirty = true }
+            .onChange(of: copy.maxPayloadBytes)             { _ in isDirty = true }
+            .onChange(of: copy.clipboardPollMs)             { _ in isDirty = true }
+            .onChange(of: copy.maxPushesPerSec)             { _ in isDirty = true }
+            .onChange(of: copy.rateLimitBurst)              { _ in isDirty = true }
+            .onChange(of: copy.smartSyncDuplicateWindowMs)  { _ in isDirty = true }
+            .onChange(of: copy.smartSyncDebounceMs)         { _ in isDirty = true }
+            .onChange(of: copy.startOnLogin)                { _ in isDirty = true }
+            .onChange(of: copy.blockSensitiveText)          { _ in isDirty = true }
+            .onChange(of: copy.requireTofuConfirmation)     { _ in isDirty = true }
+            .onChange(of: copy.showReceiveNotification)     { _ in isDirty = true }
+            .onChange(of: copy.historyLimit)                { _ in isDirty = true }
+            .onChange(of: copy.maxHistoryTextBytes)         { _ in isDirty = true }
+            .onChange(of: copy.ignorePatterns)              { _ in isDirty = true }
 
             PrefsFooter(
                 isDirty:      isDirty,
@@ -422,12 +433,41 @@ private struct SecurityPane: View {
             }
         }
 
-        // This device's fingerprint
-        if let deviceName = store.settings?.deviceName, !deviceName.isEmpty {
+        // This device's identity — name + cryptographic fingerprint for peer verification.
+        if let s = store.settings {
             PrefsSection(title: "This Device", icon: "checkmark.seal.fill", tint: CRTheme.accentBlue) {
                 PrefsRow(icon: "person.crop.circle.fill", label: "Name") {
-                    Text(deviceName)
+                    Text(s.deviceName.isEmpty ? "Unnamed" : s.deviceName)
                         .font(.system(size: 13)).foregroundStyle(CRTheme.inkSoft)
+                }
+                if let fp = store.localFingerprint, !fp.isEmpty {
+                    PrefsDivider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "key.fill")
+                                .font(.system(size: 10.5)).foregroundStyle(CRTheme.accentBlue)
+                            Text("Fingerprint")
+                                .font(.system(size: 13, weight: .medium)).foregroundStyle(CRTheme.ink)
+                            Spacer()
+                            Button {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(fp, forType: .string)
+                            } label: {
+                                Label("Copy", systemImage: "doc.on.clipboard")
+                                    .font(.system(size: 11))
+                            }
+                            .buttonStyle(CRSecondaryButtonStyle())
+                        }
+                        Text(formattedFingerprint(fp))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(CRTheme.inkSoft)
+                            .lineSpacing(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Compare with the Android app's fingerprint when pairing to verify identity.")
+                            .font(.system(size: 11)).foregroundStyle(CRTheme.inkSubtle)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.horizontal, 14).padding(.vertical, 12)
                 }
             }
         }
@@ -564,4 +604,24 @@ extension ClipRelaySettingsSnapshot {
             startOnLogin: false
         )
     }
+}
+
+// MARK: - Fingerprint formatting
+
+/// Groups a hex fingerprint into readable pairs: "AB:CD:EF:12:34..."
+private func formattedFingerprint(_ raw: String) -> String {
+    let clean = raw.replacingOccurrences(of: ":", with: "")
+        .uppercased()
+        .filter { $0.isHexDigit }
+    var pairs: [String] = []
+    var i = clean.startIndex
+    while i < clean.endIndex {
+        let j = clean.index(i, offsetBy: 2, limitedBy: clean.endIndex) ?? clean.endIndex
+        pairs.append(String(clean[i..<j]))
+        i = j
+    }
+    // Group into blocks of 8 pairs per line for readability
+    return stride(from: 0, to: pairs.count, by: 8)
+        .map { pairs[$0..<min($0 + 8, pairs.count)].joined(separator: ":") }
+        .joined(separator: "\n")
 }

@@ -71,7 +71,8 @@ struct TimelineItem: Identifiable {
         self.timestamp    = Date(timeIntervalSince1970: Double(entry.timestamp_ms) / 1000.0)
         self.pinned       = pinned
         self.fullText     = entry.text_preview
-        self.filePath     = entry.file_name
+        // Use dest_path (full filesystem path) for Finder reveal; fall back to nil if unavailable.
+        self.filePath     = entry.dest_path
 
         switch entry.kind {
         case "remote_clipboard_available", "clipboard_text":

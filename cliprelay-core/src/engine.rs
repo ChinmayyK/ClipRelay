@@ -213,6 +213,9 @@ enum ListenerCommand {
 #[derive(Debug)]
 enum DiscoveryCommand {
     Restart { bind_ip: IpAddr, port: u16 },
+    /// Force an immediate re-browse without changing bind address/port.
+    /// Used by the Mac "Scan" button and Android NSD retry.
+    Rescan,
 }
 
 #[derive(Clone)]
@@ -694,10 +697,60 @@ impl Engine {
         Ok(())
     }
 
+    /// Trigger a fresh mDNS browse query without restarting the advertisement.
+    /// Called by the Mac "Scan" button — surfaces peers that came online
+    /// since the last browse without a full discovery restart.
+    pub async fn rescan_peers(&self) {
+        if let Some(tx) = &self.shared.discovery_tx {
+            let _ = tx.send(DiscoveryCommand::Rescan).await;
+        }
+    }
+
+    /// Re-push a received clipboard item (by content hash) to connected peers.
+    /// Used when the user taps "Send" on a feed row on the Mac.
+    pub async fn repush_clipboard_hash(&self, hash: String, target: SyncTarget) -> Result<()> {
+        // Look up the text from the clipboard store by hash.
+        let text = self
+            .shared
+            .clipboard_store
+            .lock()
+            .await
+            .get_text_by_hash(&hash)
+            .context("clipboard item not found by hash")?;
+        dispatch_text(&self.shared, text, target).await?;
+        Ok(())
+    }
+
+    /// Push the current OS clipboard content to connected peers.
+    /// The daemon reads the clipboard via the platform clipboard API.
+    pub async fn push_current_clipboard(&self, target: SyncTarget) -> Result<()> {
+        let text = self
+            .shared
+            .local_clipboard
+            .lock()
+            .await
+            .read_text()
+            .context("reading local clipboard")?;
+        if let Some(text) = text {
+            dispatch_text(&self.shared, text, target).await?;
+        }
+        Ok(())
+    }
+
     /// Returns this engine's stable device UUID.
     /// Used by the Android JNI bridge to filter out self-connections during NSD.
     pub async fn device_id(&self) -> Uuid {
         self.shared.config.device_id
+    }
+
+    /// Returns this device's Noise public-key fingerprint as a lowercase hex string.
+    /// Displayed in the Mac Security pane and Android pairing screen for manual verification.
+    pub fn local_fingerprint(&self) -> String {
+        self.shared.identity_pubkey
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect::<Vec<_>>()
+            .join(":")
     }
 
     /// Atomically update sync-filter flags from a live settings change.
@@ -1027,6 +1080,19 @@ fn spawn_discovery_supervisor(shared: EngineShared, mut rx: mpsc::Receiver<Disco
                             );
                             let _ = shared.event_tx.send(EngineEvent::Warning(message)).await;
                         }
+                    }
+                }
+
+                // Rescan: trigger a fresh mDNS browse query without tearing down
+                // the advertisement.  On the Mac this is the "Scan" button; on
+                // Android the NSD retry scheduler fires this after a reconnect.
+                DiscoveryCommand::Rescan => {
+                    if let Some(ref discovery) = current {
+                        // Re-issue the browse query — causes peers to re-announce.
+                        let _ = discovery.browse(peer_tx.clone());
+                        tracing::info!("mDNS rescan triggered");
+                    } else {
+                        tracing::debug!("rescan requested but discovery not running");
                     }
                 }
             }

@@ -98,7 +98,12 @@ struct QuickAccessHistoryView: View {
                                             store:       store,
                                             isSelected:  globalIdx == selectedIndex,
                                             isExpanded:  expandedID == item.id,
-                                            onTap:       { store.copyTimelineItem(item) },
+                                            onTap:       {
+                                                store.copyTimelineItem(item)
+                                                if store.connectedCount > 0 {
+                                                    store.sendTimelineItem(item, to: nil)
+                                                }
+                                            },
                                             onExpand:    {
                                                 withAnimation(.crSpring) {
                                                     expandedID = expandedID == item.id ? nil : item.id
@@ -132,13 +137,22 @@ struct QuickAccessHistoryView: View {
         .environment(\.colorScheme, .dark)
         .onAppear { searchFocused = true }
         .onChange(of: search) { _ in selectedIndex = 0; expandedID = nil }
-        // Keyboard navigation via NSEvent monitor would live in AppDelegate;
-        // these buttons handle it when the window is focused.
         .background(
             Group {
                 Button("") { navigate(-1) }.keyboardShortcut(.upArrow,   modifiers: [])
                 Button("") { navigate(+1) }.keyboardShortcut(.downArrow, modifiers: [])
                 Button("") { runSelected() }.keyboardShortcut(.return,   modifiers: [])
+                // Escape: clear search if non-empty, otherwise close panel.
+                Button("") {
+                    if !search.isEmpty {
+                        search = ""
+                    } else {
+                        NSApp.keyWindow?.close()
+                    }
+                }.keyboardShortcut(.escape, modifiers: [])
+                // ⌘W: close panel.
+                Button("") { NSApp.keyWindow?.close() }
+                    .keyboardShortcut("w", modifiers: .command)
             }
             .frame(width: 0, height: 0).opacity(0)
         )
