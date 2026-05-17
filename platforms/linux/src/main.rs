@@ -8,7 +8,7 @@
 //!  • notify-send is rate-limited (max 1 per 2 s).
 //!  • Clipboard poll backs off to 500 ms when idle.
 //!  • Hash-based dedup — no full-text clone in memory for every tick.
-//!  • Image clipboard applied via arboard (PNG). (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+//!  • Image clipboard applied via arboard (PNG).
 
 use cliprelay_core::{
     engine::{Engine, EngineConfig, EngineEvent},
@@ -44,7 +44,7 @@ fn should_suppress() -> bool {
 }
 
 // ── Entry point ───────────────────────────────────────────────────────────────
- (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -149,7 +149,7 @@ fn main() {
                     handle_event(event, &engine_ev, &mut last).await;
                 }
                 _ = tokio::signal::ctrl_c() => {
-                    tracing::info!("Shutting down on SIGINT."); (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+                    tracing::info!("Shutting down on SIGINT.");
                     break;
                 }
             }
@@ -251,7 +251,7 @@ async fn handle_event(
         }
 
         EngineEvent::Warning(w) => tracing::warn!("{}", w),
- (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+
         _ => {}
     }
 }
@@ -271,9 +271,9 @@ pub fn apply_clipboard_content(content: &ClipboardContent) -> anyhow::Result<()>
             Ok(())
         }
 
-        ClipboardContent::Image { data, mime_type } => {
-            if !mime_type.starts_with("image/") {
-                anyhow::bail!("unsupported image mime type: {mime_type}");
+        ClipboardContent::Image { data, mime } => {
+            if !mime.starts_with("image/") {
+                anyhow::bail!("unsupported image mime type: {mime}");
             }
             let img   = image::load_from_memory(data)?;
             let rgba  = img.into_rgba8();
@@ -305,14 +305,14 @@ fn rate_limited_notify(last: &mut Instant, summary: &str, body: &str) {
     notify(summary, body);
 }
 
-fn notify(summary: &str, body: &str) { (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+fn notify(summary: &str, body: &str) {
     let _ = std::process::Command::new("notify-send")
         .args([
             "--app-name=ClipRelay",
             "--icon=edit-paste",
             "--urgency=normal",
             "--expire-time=3000",
-            summary, (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            summary,
             body,
         ])
         .spawn();

@@ -314,6 +314,16 @@ impl ClipboardApplyPolicy {
             .filter_map(|s| s.parse().ok())
             .collect();
     }
+
+    /// Enable or disable timeline-first mode at runtime.
+    pub fn set_timeline_first(&mut self, enabled: bool) {
+        self.timeline_first = enabled;
+    }
+
+    /// Enable or disable automatic clipboard application at runtime.
+    pub fn set_auto_apply(&mut self, enabled: bool) {
+        self.auto_apply = enabled;
+    }
 }
 
 impl Default for ClipboardApplyPolicy {

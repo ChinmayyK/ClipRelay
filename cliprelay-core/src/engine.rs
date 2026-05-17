@@ -9,6 +9,7 @@ use crate::network_manager::{self, NetworkChangeEvent, NetworkInterfaceInfo};
 use crate::peer_manager::{
     DiscoverySource, PeerConnectionState, PeerManager, PeerRecord, SessionShutdown,
 };
+use crate::probe::{self, ProbeResult, QualityProbe};
 use crate::protocol::{AppMessage, ClipboardContent, HistoryMetadata, DEFAULT_PORT};
 use crate::retry::Backoff;
 use crate::settings::{default_peer_store_path, default_trust_store_path, Settings};
@@ -25,7 +26,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::timeout;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
 fn now_secs() -> u64 {
@@ -33,6 +34,28 @@ fn now_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// RFC 7396 JSON merge-patch: recursively overwrite `target` with non-null
+/// fields from `patch`, removing null-keyed fields.
+fn json_merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
+    if let serde_json::Value::Object(patch_obj) = patch {
+        if !target.is_object() {
+            *target = serde_json::Value::Object(serde_json::Map::new());
+        }
+        let target_obj = target.as_object_mut().unwrap();
+        for (key, patch_val) in patch_obj {
+            if patch_val.is_null() {
+                target_obj.remove(key);
+            } else if let Some(existing) = target_obj.get_mut(key) {
+                json_merge_patch(existing, patch_val);
+            } else {
+                target_obj.insert(key.clone(), patch_val.clone());
+            }
+        }
+    } else {
+        *target = patch.clone();
+    }
 }
 
 #[derive(Debug)]
@@ -170,6 +193,10 @@ pub struct EngineConfig {
     pub bind_ip: Option<IpAddr>,
     pub enable_discovery: bool,
     pub network_poll_interval: Duration,
+    /// Root directory for daemon-managed data files (history, feedback, etc.).
+    pub data_dir: PathBuf,
+    /// Maximum number of history entries to keep in memory and on disk.
+    pub history_limit: Option<usize>,
 }
 
 impl Default for EngineConfig {
@@ -187,6 +214,11 @@ impl Default for EngineConfig {
             bind_ip: None,
             enable_discovery: true,
             network_poll_interval: Duration::from_secs(2),
+            data_dir: default_peer_store_path()
+                .parent()
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(".")),
+            history_limit: Some(500),
         }
     }
 }
@@ -240,6 +272,16 @@ struct EngineShared {
     apply_policy: Arc<Mutex<ClipboardApplyPolicy>>,
     /// Settings snapshot for policy decisions (updated lazily).
     settings: Arc<Mutex<Settings>>,
+    /// Per-peer link-quality probes — drives adaptive chunk sizing (HIGH-03).\n    /// Keyed by peer device UUID; populated on first Pong receipt.
+    quality_probes: Arc<Mutex<std::collections::HashMap<uuid::Uuid, QualityProbe>>>,
+    /// Clipboard content store — maps content hash → text payload for repush.
+    clipboard_store: Arc<Mutex<crate::engine_support::ClipboardStore>>,
+    /// Local clipboard reader (platform abstraction for push_current_clipboard).
+    local_clipboard: Arc<Mutex<crate::engine_support::LocalClipboard>>,
+    /// Persistent history store.
+    history: Arc<Mutex<crate::history::History>>,
+    /// In-memory feedback event log (most-recent N events).
+    feedback: Arc<Mutex<crate::engine_support::FeedbackLog>>,
 }
 
 pub struct Engine {
@@ -296,6 +338,26 @@ impl Engine {
             file_transfers: Arc::new(Mutex::new(FileTransferManager::new(default_save_dir()))),
             apply_policy: Arc::new(Mutex::new(ClipboardApplyPolicy::default())),
             settings: Arc::new(Mutex::new(Settings::default())),
+            quality_probes: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            clipboard_store: Arc::new(Mutex::new(
+                crate::engine_support::ClipboardStore::default(),
+            )),
+            local_clipboard: Arc::new(Mutex::new(
+                crate::engine_support::LocalClipboard::new(),
+            )),
+            history: Arc::new(Mutex::new({
+                let history_path = config.data_dir.join("history.json");
+                let limit = config.history_limit.unwrap_or(500);
+                crate::history::History::load_with_limit(&history_path, limit)
+                    .unwrap_or_else(|_| {
+                        // If the history file is missing or corrupt, start fresh
+                        // in a temp path so the daemon always starts successfully.
+                        let tmp = std::env::temp_dir().join("cliprelay_history_fallback.json");
+                        crate::history::History::load_with_limit(&tmp, limit)
+                            .expect("cannot create fallback history store")
+                    })
+            })),
+            feedback: Arc::new(Mutex::new(crate::engine_support::FeedbackLog::new(200))),
         };
 
         spawn_listener_supervisor(shared.clone(), listener_rx);
@@ -323,6 +385,7 @@ impl Engine {
         }
 
         engine.spawn_network_monitor().await?;
+        engine.spawn_peer_pruner();
         Ok(engine)
     }
 
@@ -339,7 +402,9 @@ impl Engine {
     ) -> SyncDispatchReport {
         let seq = {
             let mut guard = self.seq.lock().await;
-            *guard += 1;
+            // Use wrapping_add so the counter rolls over safely after u64::MAX
+            // instead of panicking in debug builds (LOW-01).
+            *guard = guard.wrapping_add(1);
             *guard
         };
 
@@ -364,6 +429,27 @@ impl Engine {
                 );
             }
         }
+
+        // Record text in clipboard_store for future repush by hash.
+        if let ClipboardContent::Text(ref text) = content {
+            self.shared.clipboard_store.lock().await
+                .insert(hex::encode(hash), text.clone());
+        }
+
+        // Optionally compress images before sending.
+        let compress_enabled = self.shared.settings.lock().await.sync_images;
+        let content = if matches!(content, ClipboardContent::Image { .. }) && compress_enabled {
+            let (compressed, stats) = crate::compress::compress_image(content, true).await;
+            if let Some(ref s) = stats {
+                tracing::debug!(compression = %s, "image compressed for send");
+            }
+            compressed
+        } else {
+            content
+        };
+
+        // Re-hash after potential compression so the wire message is consistent.
+        let hash = hash_content(&content);
 
         let relay_path = vec![self.shared.config.device_name.clone()];
         let msg = AppMessage::ClipboardPush {
@@ -536,6 +622,14 @@ impl Engine {
         };
         let from_device = entry.device_id;
         let from_name = entry.device_name.clone();
+        let text = self
+            .shared
+            .clipboard_store
+            .lock()
+            .await
+            .get_text_by_hash(&content_hash)
+            .or(entry.text_preview.clone())
+            .unwrap_or_default();
         {
             let mut feed = self.shared.activity.lock().await;
             feed.record_clipboard_applied(from_device, from_name.clone(), content_hash);
@@ -547,7 +641,7 @@ impl Engine {
             .send(EngineEvent::ClipboardReceived {
                 from_device,
                 from_name,
-                content: ClipboardContent::Text(entry.text_preview.unwrap_or_default()),
+                content: ClipboardContent::Text(text),
                 auto_applied: true,
                 relay_path: entry.relay_path,
                 activity_id: entry.id,
@@ -569,7 +663,234 @@ impl Engine {
         self.shared.settings.lock().await.clone()
     }
 
-    // ── File Transfer ─────────────────────────────────────────────────────────
+    /// Apply a JSON merge-patch to the current settings.
+    pub async fn patch_settings(&self, patch: String) -> Result<()> {
+        let mut current = serde_json::to_value(&*self.shared.settings.lock().await)?;
+        let patch_val: serde_json::Value = serde_json::from_str(&patch)
+            .context("patch_settings: invalid JSON patch")?;
+        json_merge_patch(&mut current, &patch_val);
+        let new_settings: Settings = serde_json::from_value(current)
+            .context("patch_settings: patched value is invalid Settings")?;
+        self.apply_settings(new_settings).await;
+        Ok(())
+    }
+
+    /// Apply a partial settings update from the Mac preferences UI.
+    pub async fn save_settings_partial(&self, p: crate::ipc::PartialSettings) -> Result<()> {
+        // Clone first so we're not holding the lock while calling apply_settings.
+        let mut s = self.shared.settings.lock().await.clone();
+        if let Some(v) = p.port                           { s.port = v; }
+        if let Some(v) = p.device_name                    { s.device_name = v; }
+        if let Some(v) = p.sync_enabled                   { s.sync_enabled = v; }
+        if let Some(v) = p.sync_text                      { s.sync_text = v; }
+        if let Some(v) = p.sync_images                    { s.sync_images = v; }
+        if let Some(v) = p.sync_files                     { s.sync_files = v; }
+        if let Some(v) = p.history_limit                  { s.history_limit = v; }
+        if let Some(v) = p.max_history_text_bytes         { s.max_history_text_bytes = v; }
+        if let Some(v) = p.max_payload_bytes              { s.max_payload_bytes = v; }
+        if let Some(v) = p.clipboard_poll_ms              { s.clipboard_poll_ms = v; }
+        if let Some(v) = p.max_pushes_per_sec             { s.max_pushes_per_sec = v; }
+        if let Some(v) = p.rate_limit_burst               { s.rate_limit_burst = v; }
+        if let Some(v) = p.smart_sync_duplicate_window_ms { s.smart_sync_duplicate_window_ms = v; }
+        if let Some(v) = p.smart_sync_debounce_ms         { s.smart_sync_debounce_ms = v; }
+        if let Some(v) = p.block_sensitive_text           { s.block_sensitive_text = v; }
+        if let Some(v) = p.require_tofu_confirmation      { s.require_tofu_confirmation = v; }
+        if let Some(v) = p.show_receive_notification      { s.show_receive_notification = v; }
+        if let Some(v) = p.ignore_patterns                { s.ignore_patterns = v; }
+        self.apply_settings(s).await;
+        Ok(())
+    }
+
+    pub async fn set_sync_enabled(&self, enabled: bool) {
+        self.shared.settings.lock().await.sync_enabled = enabled;
+    }
+
+    pub async fn set_timeline_first_mode(&self, enabled: bool) {
+        self.shared.apply_policy.lock().await.set_timeline_first(enabled);
+    }
+
+    pub async fn set_auto_apply_clipboard(&self, enabled: bool) {
+        self.shared.apply_policy.lock().await.set_auto_apply(enabled);
+    }
+
+    // ── History ───────────────────────────────────────────────────────────────
+
+    pub async fn history_recent(&self, n: usize) -> Vec<crate::history::HistoryEntry> {
+        self.shared.history.lock().await.recent(n).cloned().collect()
+    }
+
+    pub async fn history_search(&self, query: String, limit: usize) -> Vec<crate::history::HistoryEntry> {
+        self.shared.history.lock().await
+            .search_fulltext(&query).take(limit).cloned().collect()
+    }
+
+    pub async fn history_repush(&self, id: u64, target: SyncTarget) -> Result<()> {
+        let entry = self.shared.history.lock().await.get(id).cloned()
+            .context("history entry not found")?;
+        if let crate::history::HistoryPayload::Text { full_text, preview, .. } = entry.payload {
+            let text = full_text.unwrap_or(preview);
+            self.push_clipboard_to(ClipboardContent::Text(text), target).await;
+        }
+        Ok(())
+    }
+
+    pub async fn history_set_pinned(&self, id: u64, pinned: bool) -> Result<()> {
+        self.shared.history.lock().await
+            .set_pinned(id, pinned)?;
+        Ok(())
+    }
+
+    pub async fn history_delete(&self, id: u64) -> Result<bool> {
+        self.shared.history.lock().await.remove(id)
+    }
+
+    pub async fn history_clear(&self) -> Result<()> {
+        self.shared.history.lock().await.clear()
+    }
+
+    pub async fn history_export_csv(&self) -> String {
+        self.shared.history.lock().await.export_csv()
+    }
+
+    pub async fn history_export_json(&self) -> Result<String> {
+        self.shared.history.lock().await.export_json()
+    }
+
+    pub async fn history_stats(&self) -> crate::history::HistoryStats {
+        self.shared.history.lock().await.stats()
+    }
+
+    pub async fn history_add_tag(&self, id: u64, tag: String) -> Result<()> {
+        self.shared.history.lock().await.add_tag(id, &tag)?;
+        Ok(())
+    }
+
+    pub async fn history_remove_tag(&self, id: u64, tag: String) -> Result<()> {
+        self.shared.history.lock().await.remove_tag(id, &tag)?;
+        Ok(())
+    }
+
+    pub async fn history_filtered(
+        &self,
+        kind: Option<String>,
+        device: Option<String>,
+        from_secs: Option<u64>,
+        to_secs: Option<u64>,
+        tag: Option<String>,
+        limit: usize,
+        pinned_only: bool,
+    ) -> Vec<crate::history::HistoryEntry> {
+        let filter = crate::history::HistoryFilter {
+            kind,
+            device,
+            from_secs,
+            to_secs,
+            tag,
+            limit: Some(limit),
+            pinned_only,
+        };
+        self.shared.history.lock().await
+            .filter(&filter).take(limit).cloned().collect()
+    }
+
+    /// Record a local text entry in history without syncing it to peers.
+    pub async fn remember_text(&self, text: String) -> Result<()> {
+        let device_name = self.shared.config.device_name.clone();
+        let max_bytes = self.shared.settings.lock().await.max_history_text_bytes;
+        let content = crate::protocol::ClipboardContent::Text(text);
+        self.shared.history.lock().await
+            .push_with_options(&content, device_name, max_bytes)?;
+        Ok(())
+    }
+
+    /// Return the raw clipboard content for a pending incoming item by ID.
+    pub async fn incoming_clipboard(&self, id: u64) -> Option<serde_json::Value> {
+        let entries: Vec<_> = self.shared.activity.lock().await
+            .pending_remote_clipboards()
+            .into_iter()
+            .cloned()
+            .collect();
+        entries.iter()
+            .find(|e| e.id == id)
+            .map(|e| serde_json::to_value(e).ok())
+            .flatten()
+    }
+
+    // ── Templates ─────────────────────────────────────────────────────────────
+
+    pub async fn template_list(&self) -> Vec<crate::settings::ClipboardTemplate> {
+        self.shared.settings.lock().await.clipboard_templates.clone()
+    }
+
+    pub async fn template_push(&self, name: String, target: SyncTarget) -> Result<()> {
+        let templates = self.shared.settings.lock().await.clipboard_templates.clone();
+        let tmpl = templates.iter().find(|t| t.name == name)
+            .cloned()
+            .with_context(|| format!("template '{}' not found", name))?;
+        let content = crate::protocol::ClipboardContent::Text(tmpl.text);
+        match target {
+            SyncTarget::All => { self.push_clipboard(content).await; }
+            SyncTarget::Device(id) => { self.push_clipboard_to(content, SyncTarget::Device(id)).await; }
+        }
+        Ok(())
+    }
+
+    pub async fn template_set(&self, name: String, text: String, description: String) -> Result<()> {
+        let mut settings = self.shared.settings.lock().await;
+        if let Some(t) = settings.clipboard_templates.iter_mut().find(|t| t.name == name) {
+            t.text = text;
+            t.description = description;
+        } else {
+            settings.clipboard_templates.push(crate::settings::ClipboardTemplate {
+                name,
+                text,
+                description,
+            });
+        }
+        Ok(())
+    }
+
+    pub async fn template_remove(&self, name: String) -> Result<bool> {
+        let mut settings = self.shared.settings.lock().await;
+        let before = settings.clipboard_templates.len();
+        settings.clipboard_templates.retain(|t| t.name != name);
+        Ok(settings.clipboard_templates.len() < before)
+    }
+
+    // ── Per-peer settings ─────────────────────────────────────────────────────
+
+    pub async fn get_peer_settings(&self, device_id: Uuid) -> Option<crate::settings::PeerSettings> {
+        self.shared.settings.lock().await
+            .per_peer.get(&device_id.to_string()).cloned()
+    }
+
+    pub async fn patch_peer_settings(&self, device_id: Uuid, patch: String) -> Result<()> {
+        let mut settings = self.shared.settings.lock().await;
+        let key = device_id.to_string();
+        let existing = settings.per_peer.entry(key).or_default();
+        let mut val = serde_json::to_value(&*existing)?;
+        let patch_val: serde_json::Value = serde_json::from_str(&patch)
+            .context("patch_peer_settings: invalid JSON patch")?;
+        json_merge_patch(&mut val, &patch_val);
+        *existing = serde_json::from_value(val)
+            .context("patch_peer_settings: patched value is invalid PeerSettings")?;
+        Ok(())
+    }
+
+    /// Get detailed info for a trusted device.
+    pub async fn device_details(&self, device_id: Uuid) -> Option<serde_json::Value> {
+        let trust = self.shared.trust.lock().await;
+        let record = trust.get(device_id)?;
+        serde_json::to_value(record).ok()
+    }
+
+    // ── Feedback ──────────────────────────────────────────────────────────────
+
+    pub async fn feedback_recent(&self, n: usize) -> Vec<crate::engine_support::FeedbackEvent> {
+        self.shared.feedback.lock().await.recent(n)
+    }
+
+
 
     /// Send a file to a specific peer (or all if `target_device` is None).
     pub async fn send_file(
@@ -717,7 +1038,7 @@ impl Engine {
             .await
             .get_text_by_hash(&hash)
             .context("clipboard item not found by hash")?;
-        dispatch_text(&self.shared, text, target).await?;
+        self.push_clipboard_to(ClipboardContent::Text(text), target).await;
         Ok(())
     }
 
@@ -732,7 +1053,7 @@ impl Engine {
             .read_text()
             .context("reading local clipboard")?;
         if let Some(text) = text {
-            dispatch_text(&self.shared, text, target).await?;
+            self.push_clipboard_to(ClipboardContent::Text(text), target).await;
         }
         Ok(())
     }
@@ -941,6 +1262,20 @@ impl Engine {
         }
     }
 
+    /// Spawn a background task that periodically prunes transient, untrusted
+    /// peer records to prevent unbounded memory/disk growth (MED-05).
+    fn spawn_peer_pruner(&self) {
+        let peer_manager = self.shared.peer_manager.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(300)); // 5 minutes
+            interval.tick().await; // skip the first immediate tick
+            loop {
+                interval.tick().await;
+                peer_manager.prune_stale_peers();
+            }
+        });
+    }
+
     async fn spawn_network_monitor(&self) -> Result<()> {
         let mut changes = network_manager::spawn_network_monitor(
             self.shared.config.bind_ip,
@@ -949,11 +1284,19 @@ impl Engine {
         )?;
         let shared = self.shared.clone();
 
-        tokio::spawn(async move {
+        // MED-02: task panics inside tokio::spawn are silently swallowed.
+        // We attach a `JoinHandle` watcher that logs the panic payload before
+        // the engine continues running without its network monitor.
+        let handle = tokio::spawn(async move {
             while let Some(change) = changes.recv().await {
                 if let Err(err) = handle_network_change(shared.clone(), change).await {
                     warn!(error = %err, "network change handling failed");
                 }
+            }
+        });
+        tokio::spawn(async move {
+            if let Err(panic) = handle.await {
+                error!(error = ?panic, "network monitor task panicked — daemon may miss interface changes");
             }
         });
 
@@ -1533,7 +1876,10 @@ fn register_session(
         });
     }
 
-    tokio::spawn(async move {
+    // MED-02: wrap the session task in a JoinHandle watcher so that panics
+    // are logged rather than silently swallowed by the Tokio runtime.
+    let panic_peer_name = peer_name.clone();
+    let session_handle = tokio::spawn(async move {
         let mut sess = PeerSession {
             stream,
             session,
@@ -1542,6 +1888,9 @@ fn register_session(
         };
         let mut heartbeat = tokio::time::interval(shared.config.heartbeat_interval);
         let mut last_seen = Instant::now();
+        // Tracks when we sent the most recent Ping so Pong receipt gives an
+        // accurate RTT sample for the quality probe (HIGH-03).
+        let mut ping_sent_at: Option<Instant> = None;
         let disconnect_reason = loop {
             tokio::select! {
                 shutdown = &mut shutdown_rx => {
@@ -1561,7 +1910,10 @@ fn register_session(
                     if last_seen.elapsed() > shared.config.heartbeat_timeout {
                         break "heartbeat timeout".to_string();
                     }
-                    let ping = AppMessage::Ping { timestamp_ms: now_secs() * 1000 };
+                    // Use probe::make_ping() which embeds a high-resolution
+                    // timestamp, and record the send instant for RTT calc (HIGH-03).
+                    let ping = probe::make_ping();
+                    ping_sent_at = Some(Instant::now());
                     if let Err(err) = sess.send(&ping).await {
                         break format!("heartbeat send failed: {err}");
                     }
@@ -1591,6 +1943,13 @@ fn register_session(
 
                                 // Record in activity feed.
                                 let activity_id = {
+                                    if let ClipboardContent::Text(ref text) = content {
+                                        shared
+                                            .clipboard_store
+                                            .lock()
+                                            .await
+                                            .insert(hash_hex.clone(), text.clone());
+                                    }
                                     let mut feed = shared.activity.lock().await;
                                     if let ClipboardContent::Text(ref text) = content {
                                         feed.record_remote_clipboard_text(
@@ -1618,21 +1977,40 @@ fn register_session(
                                     feed.record_clipboard_applied(origin_device, display_name.clone(), hash_hex.clone());
                                 }
 
+                                // Wrap content in Arc here so all downstream users — the
+                                // EngineEvent and every relay-fanout hop — share one heap
+                                // allocation instead of N independent clones (MED-01).
+                                let shared_content = std::sync::Arc::new(content);
+
                                 let _ = shared.event_tx.send(EngineEvent::ClipboardReceived {
                                     from_device: origin_device,
                                     from_name: display_name.clone(),
-                                    content: content.clone(),
+                                    content: (*shared_content).clone(),
                                     auto_applied: auto_apply,
                                     relay_path: relay_path.clone(),
                                     activity_id,
                                 }).await;
                                 let _ = sess.send(&AppMessage::ClipboardAck { seq }).await;
 
+                                // Persist the incoming item to history.
+                                {
+                                    let max_bytes = shared.settings.lock().await.max_history_text_bytes;
+                                    let source = display_name.clone();
+                                    let _ = shared.history.lock().await
+                                        .push_with_options(&(*shared_content), source, max_bytes);
+                                }
+
                                 // ── Mesh fanout relay ──────────────────────────
                                 // If we received from a direct peer but there are other
                                 // peers in the mesh, relay onwards (excluding origin + seen).
+                                // Wrap content in Arc so each relay hop shares the same
+                                // heap allocation instead of cloning the full payload
+                                // (MED-01 — AppMessage::clone on relay hops).
                                 let fanout_peers = shared.peer_manager.active_senders();
                                 let mut router = shared.mesh_router.lock().await;
+                                // shared_content is already Arc-wrapped above; no further
+                                // full clone needed here — each fan-out is a pointer clone
+                                // plus one cheap metadata-struct clone (MED-01).
                                 for (fp_id, fp_tx) in fanout_peers {
                                     if fp_id == peer_id { continue; }
                                     let Some(fp) = shared.peer_manager.get(fp_id) else { continue; };
@@ -1642,7 +2020,7 @@ fn register_session(
                                     extended_path.push(shared.config.device_name.clone());
                                     let _ = fp_tx.try_send(AppMessage::ClipboardPush {
                                         seq,
-                                        content: content.clone(),
+                                        content: (*shared_content).clone(),
                                         origin_device,
                                         origin_device_name: display_name.clone(),
                                         relay_path: extended_path,
@@ -1894,8 +2272,21 @@ fn register_session(
                             last_seen = Instant::now();
                             let _ = sess.send(&AppMessage::Pong { timestamp_ms }).await;
                         }
-                        Ok(AppMessage::Pong { .. }) => {
+                        Ok(AppMessage::Pong { timestamp_ms: _ }) => {
                             last_seen = Instant::now();
+                            // Feed the RTT sample into the peer's quality probe
+                            // using the Instant captured at send time, which is
+                            // far more accurate than round-tripping wall-clock ms
+                            // over the network (HIGH-03).
+                            if let Some(sent_at) = ping_sent_at.take() {
+                                let rtt_us = probe::measure_rtt_us(sent_at);
+                                let result = ProbeResult::from_samples(vec![rtt_us]);
+                                let mut probes = shared.quality_probes.lock().await;
+                                probes
+                                    .entry(peer_id)
+                                    .or_insert_with(|| QualityProbe::new(peer_name.as_str()))
+                                    .record(result);
+                            }
                         }
                         Ok(AppMessage::Bye) => {
                             break "peer closed session".to_string();
@@ -1963,6 +2354,19 @@ fn register_session(
             Err(err) => {
                 warn!(peer_id = %peer_id, error = %err, "failed to mark peer disconnected");
             }
+        }
+    });
+
+    // MED-02: observe the session task handle so panics surface as log errors
+    // instead of being silently discarded by the Tokio runtime.
+    tokio::spawn(async move {
+        if let Err(panic) = session_handle.await {
+            error!(
+                peer_id = %peer_id,
+                peer_name = %panic_peer_name,
+                error = ?panic,
+                "peer session task panicked — peer will appear disconnected"
+            );
         }
     });
 

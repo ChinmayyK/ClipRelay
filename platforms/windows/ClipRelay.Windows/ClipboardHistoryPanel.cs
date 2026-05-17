@@ -1,11 +1,11 @@
 // ClipboardHistoryPanel.cs — floating clipboard history panel
 // Populated from ClipboardManager.GetHistory() / HistoryItemAdded events.
-// Shown near the system tray (bottom-right), triggered by double-click or menu. (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+// Shown near the system tray (bottom-right), triggered by double-click or menu.
 
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Linq; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+using System.Linq;
 using System.Windows.Forms;
 
 namespace ClipRelay.Windows
@@ -17,7 +17,7 @@ namespace ClipRelay.Windows
         public string   Source   { get; init; } = "local";
         public DateTime Time     { get; init; } = DateTime.Now;
         public string?  FullText { get; init; }
-        public string   TypeIcon { get; init; } = "📄"; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+        public string   TypeIcon { get; init; } = "📄";
 
         public string RelativeTime
         {
@@ -26,7 +26,7 @@ namespace ClipRelay.Windows
                 int s = (int)(DateTime.Now - Time).TotalSeconds;
                 return s < 60 ? $"{s}s ago"
                     : s < 3600 ? $"{s / 60}m ago"
-                    : $"{s / 3600}h ago"; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+                    : $"{s / 3600}h ago";
             }
         }
     }
@@ -38,14 +38,14 @@ namespace ClipRelay.Windows
         private readonly TextBox   _search;
         private readonly ListView  _list;
         private readonly Label     _countLabel;
-        private readonly Button    _clearBtn; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+        private readonly Button    _clearBtn;
 
         private List<HistoryItem> _allItems  = new();
         private List<HistoryItem> _displayed = new();
 
         // ── Events ────────────────────────────────────────────────────────────
 
-        /// Fired when the user double-clicks or presses Enter — caller pushes the item. (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+        /// Fired when the user double-clicks or presses Enter — caller pushes the item.
         public event Action<HistoryItem>? RepushRequested;
 
         // ── Constructor ───────────────────────────────────────────────────────
@@ -138,7 +138,7 @@ namespace ClipRelay.Windows
 
             // Escape closes when focus is on the form (not inside a text box).
             KeyPreview = true;
-            KeyDown   += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); }; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            KeyDown   += (_, e) => { if (e.KeyCode == Keys.Escape) Close(); };
         }
 
         // ── Public API ────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ namespace ClipRelay.Windows
         {
             if (InvokeRequired) { BeginInvoke(() => AddItem(item)); return; }
             _allItems.RemoveAll(i => i.FullText != null && i.FullText == item.FullText);
-            _allItems.Insert(0, item); (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            _allItems.Insert(0, item);
             if (_allItems.Count > 100) _allItems.RemoveRange(100, _allItems.Count - 100);
             ApplyFilter();
         }
@@ -163,14 +163,14 @@ namespace ClipRelay.Windows
                 : _allItems.Where(i =>
                     i.Summary.ToLowerInvariant().Contains(q) ||
                     i.Source.ToLowerInvariant().Contains(q) ||
-                    (i.FullText?.ToLowerInvariant().Contains(q) ?? false)).ToList(); (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+                    (i.FullText?.ToLowerInvariant().Contains(q) ?? false)).ToList();
 
             _list.BeginUpdate();
             _list.Items.Clear();
             foreach (var item in _displayed)
             {
                 var lvi = new ListViewItem(item.TypeIcon);
-                lvi.SubItems.Add(item.Summary.Length > 60 ? item.Summary[..57] + "…" : item.Summary); (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+                lvi.SubItems.Add(item.Summary.Length > 60 ? item.Summary[..57] + "…" : item.Summary);
                 lvi.SubItems.Add(item.Source == "local" ? "me" : item.Source);
                 lvi.SubItems.Add(item.RelativeTime);
                 lvi.ToolTipText = item.FullText ?? item.Summary;
@@ -184,7 +184,7 @@ namespace ClipRelay.Windows
             }
             _list.EndUpdate();
             _countLabel.Text = _displayed.Count == 0 ? "No items"
-                : $"{_displayed.Count} item{(_displayed.Count == 1 ? "" : "s")}"; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+                : $"{_displayed.Count} item{(_displayed.Count == 1 ? "" : "s")}";
         }
 
         private void OnRepush(object? sender, EventArgs e)
@@ -218,12 +218,12 @@ namespace ClipRelay.Windows
         private void ClearAll()
         {
             if (MessageBox.Show("Clear all clipboard history?", "Confirm",
-                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             _allItems.Clear();
             ApplyFilter();
         }
 
         private HistoryItem? SelectedItem() =>
-            _list.SelectedItems.Count > 0 ? _list.SelectedItems[0].Tag as HistoryItem : null; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            _list.SelectedItems.Count > 0 ? _list.SelectedItems[0].Tag as HistoryItem : null;
     }
 }

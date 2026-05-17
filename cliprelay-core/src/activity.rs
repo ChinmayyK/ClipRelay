@@ -743,3 +743,4 @@ mod tests {
         assert!(parsed.is_array());
         assert_eq!(parsed.as_array().unwrap().len(), 1);
     }
+}

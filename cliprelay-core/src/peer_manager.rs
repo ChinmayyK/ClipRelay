@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Mutex, RwLock};
+use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::{mpsc, oneshot};
 use uuid::Uuid;
@@ -143,7 +143,11 @@ pub struct PeerManager {
     path: PathBuf,
     store: RwLock<PeerStoreData>,
     live: RwLock<HashMap<Uuid, LivePeerSession>>,
-    manual_targets: Mutex<HashMap<SocketAddr, u32>>,
+    // `RwLock` instead of `Mutex`: manual_targets is read-heavy (checked on
+    // every reconnect cycle) and never held across an `.await` point.  Using
+    // `std::sync::Mutex` in an async context risks blocking a Tokio worker
+    // thread for the full duration of a lock contention window (HIGH-02).
+    manual_targets: RwLock<HashMap<SocketAddr, u32>>,
     next_session_id: AtomicU64,
 }
 
@@ -165,7 +169,7 @@ impl PeerManager {
             path,
             store: RwLock::new(store),
             live: RwLock::new(HashMap::new()),
-            manual_targets: Mutex::new(HashMap::new()),
+            manual_targets: RwLock::new(HashMap::new()),
             next_session_id: AtomicU64::new(1),
         })
     }
@@ -507,8 +511,8 @@ impl PeerManager {
 
     pub fn note_manual_target(&self, endpoint: SocketAddr) {
         self.manual_targets
-            .lock()
-            .unwrap()
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
             .entry(endpoint)
             .or_insert(0);
     }
@@ -516,20 +520,23 @@ impl PeerManager {
     pub fn record_manual_failure(&self, endpoint: SocketAddr) {
         *self
             .manual_targets
-            .lock()
-            .unwrap()
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
             .entry(endpoint)
             .or_insert(0) += 1;
     }
 
     pub fn clear_manual_target(&self, endpoint: SocketAddr) {
-        self.manual_targets.lock().unwrap().remove(&endpoint);
+        self.manual_targets
+            .write()
+            .unwrap_or_else(|p| p.into_inner())
+            .remove(&endpoint);
     }
 
     pub fn manual_targets(&self) -> Vec<SocketAddr> {
         self.manual_targets
-            .lock()
-            .unwrap()
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
             .keys()
             .copied()
             .collect()
@@ -586,18 +593,58 @@ impl PeerManager {
     }
 
     pub fn connected_count(&self) -> usize {
-        self.live.read().unwrap().len()
+        self.live.read().unwrap_or_else(|p| p.into_inner()).len()
     }
 
-    /// Fix 14: O(1) count of peers that are connected AND sync-eligible.
+    /// Prune in-memory peer records for devices that are:
+    ///   1. Not currently connected (not in the live session map), AND
+    ///   2. Not persisted across restarts (`remembered = false`), AND
+    ///   3. Not trusted (pruning trusted-but-forgotten peers would lose their
+    ///      TOFU key, requiring re-verification on next connect).
     ///
-    /// Previously callers had to `list()` the entire peer store and filter,
-    /// which is O(n) and called on every status-page refresh.  This helper
-    /// reads only the `live` session map (connected peers) and cross-checks
+    /// The daemon is designed to run for months; without this, every
+    /// transiently-seen device accumulates an entry in the peer store (MED-05).
+    ///
+    /// Call periodically (e.g. every 5 minutes from a background task).
+    pub fn prune_stale_peers(&self) -> usize {
+        let live_ids: std::collections::HashSet<Uuid> = self
+            .live
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .keys()
+            .copied()
+            .collect();
+        let pruned = {
+            let mut store = self.store.write().unwrap_or_else(|p| p.into_inner());
+            let before = store.peers.len();
+            store.peers.retain(|id, record| {
+                live_ids.contains(id) || record.remembered || record.trusted
+            });
+            before - store.peers.len()
+        };
+        if pruned > 0 {
+            tracing::info!(pruned, "pruned stale (transient, untrusted) peer records");
+            let _ = self.save();
+        }
+        pruned
+    }
+
+    /// O(1) count of peers that are connected AND sync-eligible.
+    ///
+    /// Reads only the `live` session map (connected peers) and cross-checks
     /// `sync_enabled` from the persisted record, avoiding a full table scan.
+    ///
+    /// Uses `unwrap_or_else(|p| p.into_inner())` on both locks so a panicking
+    /// task elsewhere cannot permanently poison the count (LOW-08).
     pub fn sync_eligible_count(&self) -> usize {
-        let live_ids: Vec<Uuid> = self.live.read().unwrap().keys().copied().collect();
-        let store = self.store.read().unwrap();
+        let live_ids: Vec<Uuid> = self
+            .live
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .keys()
+            .copied()
+            .collect();
+        let store = self.store.read().unwrap_or_else(|p| p.into_inner());
         live_ids
             .iter()
             .filter(|id| {

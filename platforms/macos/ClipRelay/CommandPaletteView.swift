@@ -410,8 +410,3 @@ struct PaletteCommand: Identifiable {
 }
 
 // MARK: - Accent alias (local)
-
-private extension CRTheme {
-    static let accentMint = Color(hex: 0x00C7BE)
-    static let accentTeal = Color(hex: 0x32ADE6)
-}

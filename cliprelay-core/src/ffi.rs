@@ -561,4 +561,4 @@ pub unsafe extern "C" fn cliprelay_apply_by_hash(
     hash_ptr: *const std::ffi::c_char,
 ) -> std::ffi::c_int {
     cliprelay_apply_clipboard(handle, hash_ptr)
-} (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+}

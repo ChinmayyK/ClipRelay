@@ -325,3 +325,4 @@ mod tests {
         // Map should be empty after resolution.
         assert_eq!(mgr_ref.pending_count().await, 0);
     }
+}

@@ -439,7 +439,3 @@ mod tests {
         assert!(s.contains("uptime="));
     }
 }
-        reg.peer_disconnected(id);
-        assert_eq!(reg.peer_count(), 0);
-    }
-}

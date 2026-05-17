@@ -489,3 +489,4 @@ mod tests {
         let clean = s.sanitize();
         assert_eq!(clean.ignore_patterns, vec!["foo"]);
     }
+}

@@ -10,7 +10,7 @@
 #![cfg(target_os = "android")]
 
 use jni::objects::{JByteArray, JClass, JString};
-use jni::sys::{jbyteArray, jint, jlong, jstring};
+use jni::sys::{jboolean, jbyteArray, jint, jlong, jstring};
 use jni::JNIEnv;
 
 use crate::engine::{Engine, EngineConfig};
@@ -576,22 +576,20 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_applyClipboardByHash(
     mut env: JNIEnv,
     _class: JClass,
     engine_ptr: jlong,
-    hash_jstr: jstring,
+    hash_jstr: JString,
 ) -> jint {
     if engine_ptr == 0 {
         return 0;
     }
     let hash: String = {
-        let jstr = unsafe { JString::from_raw(hash_jstr) };
-        let s = match env.get_string(&jstr) {
+        let s = match env.get_string(&hash_jstr) {
             Ok(s) => s,
             Err(_) => return 0,
         };
         s.into()
     };
-    let engine_ref = unsafe { &*(engine_ptr as *const crate::engine::Engine) };
-    let rt = tokio::runtime::Handle::current();
-    match rt.block_on(engine_ref.apply_clipboard_by_hash(hash)) {
+    let h = unsafe { &*(engine_ptr as *const AndroidHandle) };
+    match rt().block_on(h.engine.apply_clipboard_by_hash(hash)) {
         Ok(true) => 1,
         _ => 0,
     }
@@ -604,14 +602,13 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_acceptFileTransfer(
     mut env: JNIEnv,
     _class: JClass,
     engine_ptr: jlong,
-    transfer_id_hex: jstring,
+    transfer_id_hex: JString,
 ) -> jint {
     if engine_ptr == 0 {
         return 0;
     }
     let hex_str: String = {
-        let jstr = unsafe { JString::from_raw(transfer_id_hex) };
-        let s = match env.get_string(&jstr) {
+        let s = match env.get_string(&transfer_id_hex) {
             Ok(s) => s,
             Err(_) => return 0,
         };
@@ -623,9 +620,8 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_acceptFileTransfer(
     let Ok(tid): Result<[u8; 16], _> = bytes.try_into() else {
         return 0;
     };
-    let engine_ref = unsafe { &*(engine_ptr as *const crate::engine::Engine) };
-    let rt = tokio::runtime::Handle::current();
-    match rt.block_on(engine_ref.accept_file_transfer(tid)) {
+    let h = unsafe { &*(engine_ptr as *const AndroidHandle) };
+    match rt().block_on(h.engine.accept_file_transfer(tid)) {
         Ok(()) => 1,
         Err(_) => 0,
     }
@@ -638,14 +634,13 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_rejectFileTransfer(
     mut env: JNIEnv,
     _class: JClass,
     engine_ptr: jlong,
-    transfer_id_hex: jstring,
+    transfer_id_hex: JString,
 ) -> jint {
     if engine_ptr == 0 {
         return 0;
     }
     let hex_str: String = {
-        let jstr = unsafe { JString::from_raw(transfer_id_hex) };
-        let s = match env.get_string(&jstr) {
+        let s = match env.get_string(&transfer_id_hex) {
             Ok(s) => s,
             Err(_) => return 0,
         };
@@ -657,9 +652,8 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_rejectFileTransfer(
     let Ok(tid): Result<[u8; 16], _> = bytes.try_into() else {
         return 0;
     };
-    let engine_ref = unsafe { &*(engine_ptr as *const crate::engine::Engine) };
-    let rt = tokio::runtime::Handle::current();
-    match rt.block_on(engine_ref.reject_file_transfer(tid, "user rejected".into())) {
+    let h = unsafe { &*(engine_ptr as *const AndroidHandle) };
+    match rt().block_on(h.engine.reject_file_transfer(tid, "user rejected".into())) {
         Ok(()) => 1,
         Err(_) => 0,
     }

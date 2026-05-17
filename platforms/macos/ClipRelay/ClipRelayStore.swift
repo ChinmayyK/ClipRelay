@@ -5,6 +5,7 @@
 import Foundation
 import Combine
 import AppKit
+import SwiftUI
 import ServiceManagement
 
 // MARK: - Notification names
@@ -13,7 +14,6 @@ extension Notification.Name {
     /// Posted by ClipRelayStore.openHistoryPanel() — observed by AppDelegate.
     static let clipRelayOpenHistoryPanel = Notification.Name("com.cliprelay.openHistoryPanel")
 }
-import AppKit
 
 @MainActor
 final class ClipRelayStore: ObservableObject {
@@ -374,6 +374,13 @@ final class ClipRelayStore: ObservableObject {
         }
     }
 
+    func sendQuickContext(to device: ManagedDevice) {
+        guard let context = quickSendContext else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(context.text, forType: .string)
+        sendCurrentClipboard(to: device)
+    }
+
     // MARK: - Activity Feed
 
     @MainActor
@@ -459,7 +466,6 @@ final class ClipRelayStore: ObservableObject {
                 NSLog("ClipRelay: login item \(enabled ? "register" : "unregister") error: \(error)")
             }
         }
-    }
     }
 
     // MARK: - Command palette

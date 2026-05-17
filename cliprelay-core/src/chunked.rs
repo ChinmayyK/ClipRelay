@@ -18,7 +18,6 @@
 
 use crate::protocol::ClipboardContent;
 use anyhow::{Context, Result};
-use bytes::Bytes;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -39,11 +38,18 @@ pub enum ChunkKind {
 
 /// Split a `ClipboardContent` into ordered chunk messages.
 /// Returns `None` for small payloads that can be sent inline.
+///
+/// Previously this function eagerly cloned the entire payload into a `Vec<u8>`
+/// before checking whether it exceeded `CHUNK_THRESHOLD`, wasting up to 128 KB
+/// of heap on every outgoing clipboard push (HIGH-06).  We now borrow the
+/// underlying bytes for the threshold check and only materialise the chunks
+/// after we know the payload is large enough to warrant chunking.
 pub fn maybe_chunk(content: &ClipboardContent) -> Option<Vec<ChunkMessage>> {
-    let raw = match content {
-        ClipboardContent::Text(s) => s.as_bytes().to_vec(),
-        ClipboardContent::Image { data, .. } => data.clone(),
-        ClipboardContent::File { data, .. } => data.clone(),
+    // Borrow the raw bytes without cloning — used for length check and checksum.
+    let raw: &[u8] = match content {
+        ClipboardContent::Text(s) => s.as_bytes(),
+        ClipboardContent::Image { data, .. } => data.as_slice(),
+        ClipboardContent::File { data, .. } => data.as_slice(),
     };
 
     if raw.len() <= CHUNK_THRESHOLD {
@@ -56,15 +62,17 @@ pub fn maybe_chunk(content: &ClipboardContent) -> Option<Vec<ChunkMessage>> {
         ClipboardContent::File { name, .. } => ChunkKind::File { name: name.clone() },
     };
 
-    let checksum = hex::encode(Sha256::digest(&raw));
+    let checksum = hex::encode(Sha256::digest(raw));
     let mut id = [0u8; 16];
     id.copy_from_slice(Uuid::new_v4().as_bytes());
 
-    let chunks: Vec<Bytes> = raw.chunks(CHUNK_SIZE).map(Bytes::copy_from_slice).collect();
-    let total_chunks = chunks.len() as u32;
+    // Now slice directly from the borrowed bytes — one copy per chunk instead
+    // of one full-payload clone followed by per-chunk copies.
     let total_bytes = raw.len() as u64;
+    let chunk_slices: Vec<&[u8]> = raw.chunks(CHUNK_SIZE).collect();
+    let total_chunks = chunk_slices.len() as u32;
 
-    let mut msgs = Vec::with_capacity(chunks.len() + 2);
+    let mut msgs = Vec::with_capacity(chunk_slices.len() + 2);
     msgs.push(ChunkMessage::Start {
         transfer_id: id,
         total_chunks,
@@ -72,11 +80,11 @@ pub fn maybe_chunk(content: &ClipboardContent) -> Option<Vec<ChunkMessage>> {
         checksum,
         kind,
     });
-    for (index, data) in chunks.into_iter().enumerate() {
+    for (index, slice) in chunk_slices.into_iter().enumerate() {
         msgs.push(ChunkMessage::Chunk {
             transfer_id: id,
             index: index as u32,
-            data: data.to_vec(),
+            data: slice.to_vec(),
         });
     }
     msgs.push(ChunkMessage::End { transfer_id: id });
@@ -462,3 +470,4 @@ mod tests {
         let p = r.progress(&ids[0]).unwrap();
         assert!(p > 0.0 && p <= 1.0);
     }
+}

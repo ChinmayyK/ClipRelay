@@ -120,12 +120,15 @@ impl HistoryEntry {
             ClipboardContent::Text(s) => {
                 let preview_len = s.len().min(MAX_TEXT_PREVIEW);
                 let preview = format_preview(s, preview_len);
-                let stored_len = s.len().min(max_text_bytes);
+                // Truncate stored text at a UTF-8 character boundary (CRIT-03):
+                // raw byte slicing panics when max_text_bytes falls inside a
+                // multi-byte codepoint (emoji, CJK, accented text).
+                let stored_len = utf8_floor_boundary(s, max_text_bytes);
                 let full_text = Some(s[..stored_len].to_string());
                 HistoryPayload::Text {
                     preview,
                     full_len: s.len(),
-                    is_truncated: s.len() > stored_len,
+                    is_truncated: stored_len < s.len(),
                     full_text,
                 }
             }
@@ -171,8 +174,10 @@ impl HistoryEntry {
         match &self.payload {
             HistoryPayload::Text { preview, .. } => {
                 let first_line = preview.lines().next().unwrap_or("").trim();
+                // Guard against slicing inside a multi-byte char (CRIT-03).
                 if first_line.len() > 60 {
-                    format!("{}...", &first_line[..60])
+                    let safe = utf8_floor_boundary(first_line, 60);
+                    format!("{}...", &first_line[..safe])
                 } else {
                     first_line.to_string()
                 }
@@ -212,9 +217,27 @@ impl HistoryEntry {
     }
 }
 
+/// Find the largest valid UTF-8 character boundary that is <= `max_bytes`.
+///
+/// Slicing a `&str` at a byte offset that falls inside a multi-byte codepoint
+/// (e.g. emoji, CJK, accented Latin) causes a panic.  This helper finds the
+/// safe truncation point so callers can always slice without panic.
+fn utf8_floor_boundary(s: &str, max_bytes: usize) -> usize {
+    if max_bytes >= s.len() {
+        return s.len();
+    }
+    // Walk backwards from max_bytes until we land on a char boundary.
+    let mut pos = max_bytes;
+    while pos > 0 && !s.is_char_boundary(pos) {
+        pos -= 1;
+    }
+    pos
+}
+
 fn format_preview(text: &str, preview_len: usize) -> String {
-    if text.len() > preview_len {
-        format!("{}...", &text[..preview_len])
+    let safe_len = utf8_floor_boundary(text, preview_len);
+    if safe_len < text.len() {
+        format!("{}...", &text[..safe_len])
     } else {
         text.to_string()
     }

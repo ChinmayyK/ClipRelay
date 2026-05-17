@@ -92,7 +92,13 @@ impl FilterChain {
         for f in &self.filters {
             let v = f.check(content);
             if !v.is_allow() {
-                tracing::debug!("[filter:{}] {:?}", f.name(), v);
+                // LOW-06: log only the filter name and reason string — never
+                // the content payload, which may contain passwords or PII.
+                let reason = match &v {
+                    Verdict::Deny { reason } => reason.as_str(),
+                    Verdict::Allow => "",
+                };
+                tracing::debug!(filter = f.name(), reason, "content blocked by filter");
                 return v;
             }
         }

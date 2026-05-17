@@ -139,7 +139,7 @@ namespace ClipRelay.Windows
     /// peers are connected for near-real-time UI; slow (5 s) when idle.
     /// </summary>
     internal sealed class DaemonPoller : IDisposable
-    { (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+    {
 
         public static JsonDocument? PushText(string text) =>
             Send(new { cmd = "push_text", text });
@@ -230,7 +230,7 @@ namespace ClipRelay.Windows
         private bool _wasDaemonRunning;
         private int  _lastPeerCount        = -1;
         private bool _lastSyncState        = true;
-        private int  _lastPendingClipboard = -1; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+        private int  _lastPendingClipboard = -1;
 
         public event Action<bool>? DaemonAvailabilityChanged;
         public event Action<int>?  PeerCountChanged;
@@ -243,7 +243,7 @@ namespace ClipRelay.Windows
         private void SchedulePoll(int delayMs)
         {
             _timer?.Dispose();
-            _timer = new System.Threading.Timer(_ => Poll(), null, delayMs, Timeout.Infinite); (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            _timer = new System.Threading.Timer(_ => Poll(), null, delayMs, Timeout.Infinite);
         }
 
         private void Poll()
@@ -258,7 +258,7 @@ namespace ClipRelay.Windows
             if (!running) { SchedulePoll(SlowMs); return; }
 
             var resp = DaemonClient.Status();
-            if (resp == null) { SchedulePoll(SlowMs); return; } (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            if (resp == null) { SchedulePoll(SlowMs); return; }
 
             try
             {
@@ -286,6 +286,6 @@ namespace ClipRelay.Windows
             SchedulePoll(_lastPeerCount > 0 ? FastMs : SlowMs);
         }
 
-        public void Dispose() { _timer?.Dispose(); } (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+        public void Dispose() { _timer?.Dispose(); }
     }
 }

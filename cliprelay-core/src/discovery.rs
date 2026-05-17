@@ -78,7 +78,7 @@ mod platform {
             // TRU-06: Device names are intentionally NOT included in mDNS TXT records.
             // Only the opaque UUID is broadcast here.  The friendly device name is
             // exchanged after a successful encrypted handshake via HelloFrame/HelloAck,
-            // so passive mDNS observers cannot enumerate device names on the LAN. (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            // so passive mDNS observers cannot enumerate device names on the LAN.
             // Fix 6: was hard-coded to "1"; now dynamically reflects PROTOCOL_VERSION.
             properties.insert("v".to_string(), PROTOCOL_VERSION.to_string());
 
@@ -165,7 +165,7 @@ mod platform {
                                 let device_name = format!(
                                     "device-{}",
                                     &peer_id.to_string()[..8]
-                                ); (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+                                );
 
                                 // Fix 7: Prefer IPv4 over IPv6 link-local.
                                 // Old code: `info.get_addresses().iter().next()` — arbitrary
@@ -179,7 +179,7 @@ mod platform {
                                 let port = info.get_port();
                                 info!(
                                     "mDNS: found peer {} at {}:{} (name resolved after handshake)",
-                                    peer_id, addr, port (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+                                    peer_id, addr, port
                                 );
                                 resolved
                                     .lock()

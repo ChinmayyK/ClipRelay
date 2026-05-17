@@ -32,6 +32,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
@@ -627,6 +628,7 @@ class ClipRelayService : Service() {
                     deviceName = from,
                     kind = ActivityKind.CLIPBOARD_TEXT,
                     preview = preview,
+                    contentHash = textContentHash(text),
                     appliedLocally = autoApplied
                 ))
 
@@ -634,7 +636,7 @@ class ClipRelayService : Service() {
                     applyText(text, from)
                 } else {
                     // Show a dismissable notification with an "Apply" action.
-                    showClipboardAvailableNotification(from, preview, text)
+                    showClipboardAvailableNotification(from, preview, text, textContentHash(text))
                 }
             }
 
@@ -798,12 +800,16 @@ class ClipRelayService : Service() {
 
     // ── Clipboard available notification (timeline-first) ─────────────────────
 
-    private fun showClipboardAvailableNotification(from: String, preview: String, fullText: String) {
+    private fun showClipboardAvailableNotification(
+        from: String,
+        preview: String,
+        fullText: String,
+        contentHash: String
+    ) {
         val applyIntent = Intent(ACTION_APPLY_CLIPBOARD).apply {
             `package` = packageName
             putExtra(EXTRA_CLIPBOARD_TEXT, fullText)
-            // No hash available from this call site — fullText IS the full content here
-            // (the notification is built from the engine event which provides complete text).
+            putExtra(EXTRA_CONTENT_HASH, contentHash)
         }
         val applyPi = PendingIntent.getBroadcast(
             this, fullText.hashCode(),
@@ -824,7 +830,7 @@ class ClipRelayService : Service() {
         val bigText = if (fullText.length > 400) fullText.take(397) + "…" else fullText
 
         val notif = NotificationCompat.Builder(this, CHAN_ALERTS)
-            .setSmallIcon(android.R.drawable.ic_menu_clipboard)
+            .setSmallIcon(android.R.drawable.ic_menu_edit)
             .setContentTitle("$from → clipboard")
             .setContentText(preview)
             .setStyle(
@@ -1127,6 +1133,13 @@ class ClipRelayService : Service() {
         return "ClipRelay-image.$ext"
     }
 
+    private fun textContentHash(text: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        digest.update('T'.code.toByte())
+        digest.update(text.toByteArray(Charsets.UTF_8))
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
     private sealed interface OutgoingPayload {
         data class Image(val mime: String, val data: ByteArray) : OutgoingPayload
         data class File(val name: String, val data: ByteArray) : OutgoingPayload
@@ -1161,6 +1174,8 @@ class ClipRelayService : Service() {
             serviceName = "cliprelay-$uuidPrefix-$safeName"
             serviceType = NSD_SERVICE_TYPE
             port        = DEFAULT_CLIPRELAY_PORT
+            setAttribute("id", ClipRelayJni.getDeviceId(engineHandle) ?: "")
+            setAttribute("v", "3")
         }
 
         val regListener = object : NsdManager.RegistrationListener {

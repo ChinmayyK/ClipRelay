@@ -305,7 +305,7 @@ private struct TimelineSectionView: View {
                             CREmptyState(
                                 systemImage: "magnifyingglass",
                                 title: "No results",
-                                message: search.isEmpty ? "Try a different filter." : "No items match "\(search)".",
+                                message: search.isEmpty ? "Try a different filter." : "No items match \"\(search)\".",
                                 accent: CRTheme.accentIndigo,
                                 actionLabel: "Clear search",
                                 onAction: { search = "" }
@@ -395,7 +395,7 @@ private struct DevicesSectionView: View {
             .padding(.horizontal, 20).padding(.bottom, 24)
         }
         .fileImporter(isPresented: $showingFileImporter, allowedContentTypes: [.item]) { result in
-            if case let .success(urls) = result, let url = urls.first {
+            if case let .success(url) = result {
                 store.sendFile(url: url, to: pendingFileTarget); pendingFileTarget = nil
             }
         }

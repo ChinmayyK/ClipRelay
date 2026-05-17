@@ -82,7 +82,14 @@ async fn handle_pipe_client<H, Fut>(
     while let Ok(Some(line)) = lines.next_line().await {
         let response = match serde_json::from_str::<IpcRequest>(&line) {
             Ok(req) => {
-                debug!("Windows IPC request: {:?}", req);
+                // LOW-07: never log the raw IPC request on Windows either —
+                // it may contain clipboard text, passwords, or other private
+                // data. Log only the command discriminant (the tag field).
+                let cmd_tag = serde_json::to_value(&req)
+                    .ok()
+                    .and_then(|v| v.get("cmd").and_then(|c| c.as_str()).map(String::from))
+                    .unwrap_or_else(|| "<unknown>".into());
+                debug!(cmd = %cmd_tag, "Windows IPC request received");
                 handler(req).await
             }
             Err(e) => IpcResponse::error(format!("parse: {}", e)),

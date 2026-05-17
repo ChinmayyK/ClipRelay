@@ -5,13 +5,13 @@
 // The Rust DLL (cliprelay_core.dll) must be in the same directory as the EXE.
 
 using System;
-using System.Collections.Generic; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
-using System.Threading.Tasks; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+using System.Threading.Tasks;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
@@ -36,7 +36,7 @@ namespace ClipRelay.Windows
 
         [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
         public static extern IntPtr cliprelay_start(
-            [MarshalAs(UnmanagedType.LPUTF8Str)] string? deviceName, ushort port); (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string? deviceName, ushort port);
 
         [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
         public static extern void cliprelay_stop(IntPtr handle);
@@ -53,7 +53,7 @@ namespace ClipRelay.Windows
         [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
         public static extern int cliprelay_push_file(
             IntPtr handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string name,
-            byte[] data, UIntPtr len); (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            byte[] data, UIntPtr len);
 
         [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
         public static extern IntPtr cliprelay_poll_event(IntPtr handle);
@@ -76,7 +76,7 @@ namespace ClipRelay.Windows
             IntPtr handle, [MarshalAs(UnmanagedType.LPUTF8Str)] string deviceName, int trust);
 
         [DllImport(DLL, CallingConvention = CallingConvention.Cdecl)]
-        public static extern void cliprelay_free_event(IntPtr ev); (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+        public static extern void cliprelay_free_event(IntPtr ev);
 
         public static string? PtrToUtf8String(IntPtr ptr)
         {
@@ -132,14 +132,14 @@ namespace ClipRelay.Windows
             RefreshStatus();
             _pollTimer  = new System.Threading.Timer(_ => DrainEvents(),    null, 0,   20);
             _watchTimer = new System.Threading.Timer(_ => CheckClipboard(), null, 200, 100);
-            _lastSequenceNumber = GetClipboardSequenceNumber(); (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            _lastSequenceNumber = GetClipboardSequenceNumber();
         }
 
         public void Stop()
         {
             _pollTimer?.Dispose();  _pollTimer  = null;
             _watchTimer?.Dispose(); _watchTimer = null;
-            if (_handle != IntPtr.Zero) { NativeCore.cliprelay_stop(_handle); _handle = IntPtr.Zero; } (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            if (_handle != IntPtr.Zero) { NativeCore.cliprelay_stop(_handle); _handle = IntPtr.Zero; }
         }
 
         public void Dispose() => Stop();
@@ -161,7 +161,7 @@ namespace ClipRelay.Windows
 
         private void CheckClipboard()
         {
-            if (_handle == IntPtr.Zero) return; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            if (_handle == IntPtr.Zero) return;
             uint seq = GetClipboardSequenceNumber();
             if (seq == _lastSequenceNumber) return;
             _lastSequenceNumber = seq;
@@ -227,7 +227,7 @@ namespace ClipRelay.Windows
             catch { /* clipboard is inherently racy on Windows */ }
         }
 
-        // ── Incoming: drain Rust event queue ───────────────────────────────── (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+        // ── Incoming: drain Rust event queue ─────────────────────────────────
 
         private void DrainEvents()
         {
@@ -236,7 +236,7 @@ namespace ClipRelay.Windows
             {
                 var ev = NativeCore.cliprelay_poll_event(_handle);
                 if (ev == IntPtr.Zero) break;
-                try   { HandleEvent(ev); } (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+                try   { HandleEvent(ev); }
                 finally { NativeCore.cliprelay_free_event(ev); }
             }
         }
@@ -308,7 +308,7 @@ namespace ClipRelay.Windows
                     var msg = NativeCore.PtrToUtf8String(NativeCore.cliprelay_event_text(ev));
                     if (msg != null) StatusChanged?.Invoke($"⚠️ {msg}");
                     break;
-                } (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+                }
             }
         }
 
@@ -361,7 +361,7 @@ namespace ClipRelay.Windows
         {
             lock (_connectedPeers) return _connectedPeers.Count > 0;
         }
- (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+
         [DllImport("user32.dll")]
         private static extern uint GetClipboardSequenceNumber();
     }
@@ -380,7 +380,7 @@ namespace ClipRelay.Windows
 
         private ClipboardHistoryPanel? _historyPanel;
         private bool                   _syncEnabled  = true;
-        private DateTime               _lastBalloonAt = DateTime.MinValue; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+        private DateTime               _lastBalloonAt = DateTime.MinValue;
 
         public TrayApp()
         {
@@ -678,12 +678,12 @@ namespace ClipRelay.Windows
             form.Controls.AddRange(new Control[] { lbl, txt, btn });
             form.AcceptButton = btn;
             return form.ShowDialog() == DialogResult.OK && !string.IsNullOrWhiteSpace(txt.Text)
-                ? txt.Text.Trim() : null; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+                ? txt.Text.Trim() : null;
         }
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { _tray.Dispose(); _mgr.Dispose(); _menu.Dispose(); } (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            if (disposing) { _tray.Dispose(); _mgr.Dispose(); _menu.Dispose(); }
             base.Dispose(disposing);
         }
     }
@@ -695,7 +695,7 @@ namespace ClipRelay.Windows
         [DllImport("user32.dll", SetLastError = true)]
         public static extern bool DestroyIcon(IntPtr hIcon);
     }
- (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+
     // ── Entry point ───────────────────────────────────────────────────────────
 
     internal static class Program
@@ -735,6 +735,6 @@ namespace ClipRelay.Windows
                     $"[{DateTime.Now:u}] {ex.GetType().Name}: {ex.Message}\n{ex.StackTrace}\n\n");
             }
             catch { }
-        } (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+        }
     }
 }

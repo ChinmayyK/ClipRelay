@@ -9,12 +9,12 @@
 //! 2. **SimNetwork harness** (`sim_*`) — uses the in-process `SimNetwork`
 //!    channel pair so tests are fast, deterministic, and free of OS resources.
 //!    These cover dedup, echo suppression, image payloads, multi-item ordering,
-//!    latency measurement, and degraded-network conditions (BLD-05). (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+//!    latency measurement, and degraded-network conditions (BLD-05).
 
 use cliprelay_core::engine::{Engine, EngineConfig, EngineEvent};
 use cliprelay_core::identity::IdentityStore;
 use cliprelay_core::protocol::ClipboardContent;
-use cliprelay_core::sim::{NetworkConditions, SimNetwork}; (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+use cliprelay_core::sim::{NetworkConditions, SimNetwork};
 use cliprelay_core::trust::TrustStore;
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::{Duration, Instant};
@@ -280,4 +280,4 @@ async fn sim_drain_returns_all_pending() {
 
     let drained = bob.drain_clipboard().await;
     assert_eq!(drained.len(), 5, "drain must collect all 5 items");
-} (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+}

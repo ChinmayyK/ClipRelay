@@ -388,7 +388,6 @@ pub fn format_fingerprint(fp: &[u8; 32]) -> String {
         .collect::<Vec<_>>()
         .join(":")
 }
-}
 
 #[cfg(test)]
 mod tests {
@@ -484,3 +483,4 @@ mod tests {
         assert!(summary.contains("MyPhone"), "summary: {}", summary);
         assert!(summary.contains("Trusted"), "summary: {}", summary);
     }
+}

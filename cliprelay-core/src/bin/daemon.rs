@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use base64::Engine as _;
 use cliprelay_core::{
     engine::{Engine, EngineConfig, EngineEvent, SyncDispatchReport, SyncTarget},
     history::{History, HistoryEntry, HistoryFilter},
@@ -122,7 +123,7 @@ async fn run() -> Result<()> {
         .context("starting Windows named-pipe IPC server")?;
         tracing::info!("Windows IPC server started on \\\\.\\pipe\\cliprelay");
     }
- (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+
     tracing::info!(
         "ClipRelay daemon started. IPC socket: {:?}",
         cliprelay_core::ipc::socket_path()
@@ -178,7 +179,7 @@ async fn run() -> Result<()> {
             }
         });
     }
- (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+
     tokio::select! {
         _ = state.shutdown.notified() => {
             tracing::info!("Shutdown requested by IPC client");
@@ -615,7 +616,7 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
                 .as_deref()
                 .map(parse_uuid)
                 .transpose()?
-                .map(SyncTarget::One)
+                .map(SyncTarget::Device)
                 .unwrap_or(SyncTarget::All);
             state.engine.repush_clipboard_hash(hash, target).await?;
             Ok(IpcResponse::ok_empty())
@@ -627,7 +628,7 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
                 .as_deref()
                 .map(parse_uuid)
                 .transpose()?
-                .map(SyncTarget::One)
+                .map(SyncTarget::Device)
                 .unwrap_or(SyncTarget::All);
             state.engine.push_current_clipboard(target).await?;
             Ok(IpcResponse::ok_empty())
@@ -805,7 +806,7 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
                 .map(SyncTarget::Device)
                 .unwrap_or(SyncTarget::All);
             let content = ClipboardContent::Text(tmpl.text.clone());
-            remember_history(state, &content, current_device_name(state).await).await?;
+            remember_history(&state, &content, current_device_name(&state).await).await?;
             Ok(IpcResponse::ok(
                 state.engine.push_clipboard_to(content, target).await,
             ))
@@ -909,7 +910,7 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
             let csv = state.history.lock().await.export_csv();
             Ok(IpcResponse::ok(csv))
         }
- (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+
         IpcRequest::Shutdown => {
             state.shutdown.notify_waiters();
             Ok(IpcResponse::ok_empty())

@@ -14,6 +14,6 @@
     <style name="Theme.ClipRelay.Dialog" parent="Theme.AppCompat.Light.Dialog">
         <item name="colorPrimary">@color/cr_accent</item>
         <item name="colorAccent">@color/cr_accent</item>
-        <item name="android:windowBackground">@color/cr_card</item>
+        <item name="android:windowBackground">@color/cr_bg_card</item>
     </style>
 </resources>

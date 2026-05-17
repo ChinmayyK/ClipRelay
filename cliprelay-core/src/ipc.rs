@@ -16,7 +16,7 @@
 //! Plain JSON request → JSON response (newline-delimited), both directions.
 //! No authentication needed — socket is mode 0600, only the owning user.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -28,7 +28,57 @@ pub fn parse_uuid(value: &str) -> anyhow::Result<uuid::Uuid> {
     uuid::Uuid::parse_str(value)
         .with_context(|| format!("invalid UUID: {value}"))
 }
- (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+
+/// Decode standard or URL-safe base64. Used by IPC push-image / push-file.
+pub fn decode_base64(s: &str) -> anyhow::Result<Vec<u8>> {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .decode(s)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(s))
+        .context("base64 decode failed")
+}
+
+/// Parse a transfer-ID string (hex UUID without hyphens, or standard UUID).
+pub fn parse_transfer_id(s: &str) -> anyhow::Result<[u8; 16]> {
+    // Accept standard UUID form (with dashes) or 32-char hex.
+    let uid = if s.len() == 32 {
+        let mut bytes = [0u8; 16];
+        hex::decode_to_slice(s, &mut bytes).context("invalid transfer id hex")?;
+        bytes
+    } else {
+        let mut bytes = [0u8; 16];
+        bytes.copy_from_slice(
+            uuid::Uuid::parse_str(s)
+                .context("invalid transfer id uuid")?
+                .as_bytes(),
+        );
+        bytes
+    };
+    Ok(uid)
+}
+
+/// Flattened partial-settings struct used by `SaveSettings` IPC variant.
+pub struct PartialSettings {
+    pub port:                           Option<u16>,
+    pub device_name:                    Option<String>,
+    pub sync_enabled:                   Option<bool>,
+    pub sync_text:                      Option<bool>,
+    pub sync_images:                    Option<bool>,
+    pub sync_files:                     Option<bool>,
+    pub history_limit:                  Option<usize>,
+    pub max_history_text_bytes:         Option<usize>,
+    pub max_payload_bytes:              Option<u64>,
+    pub clipboard_poll_ms:              Option<u64>,
+    pub max_pushes_per_sec:             Option<f64>,
+    pub rate_limit_burst:               Option<f64>,
+    pub smart_sync_duplicate_window_ms: Option<u64>,
+    pub smart_sync_debounce_ms:         Option<u64>,
+    pub block_sensitive_text:           Option<bool>,
+    pub require_tofu_confirmation:      Option<bool>,
+    pub show_receive_notification:      Option<bool>,
+    pub ignore_patterns:                Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "cmd", rename_all = "snake_case")]
 pub enum IpcRequest {
@@ -263,7 +313,7 @@ impl IpcResponse {
     #[inline]
     pub fn err(msg: impl Into<String>) -> Self {
         Self::error(msg)
-    } (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+    }
 }
 
 // ── Socket path ───────────────────────────────────────────────────────────────
@@ -334,6 +384,10 @@ pub mod server {
         Ok(())
     }
 
+    pub async fn spawn_with_engine(engine: std::sync::Arc<crate::engine::Engine>) -> Result<()> {
+        super::client::spawn_with_engine(engine).await
+    }
+
     async fn handle_connection<H, Fut>(stream: UnixStream, handler: Arc<H>)
     where
         H: Fn(IpcRequest) -> Fut + Send + Sync + 'static,
@@ -345,7 +399,14 @@ pub mod server {
         while let Ok(Some(line)) = lines.next_line().await {
             let response = match serde_json::from_str::<IpcRequest>(&line) {
                 Ok(req) => {
-                    debug!("IPC request: {:?}", req);
+                    // LOW-07: never log the raw IPC request — it may contain
+                    // clipboard text, passwords, or other private content.
+                    // Log only the command discriminant (the tag field).
+                    let cmd_tag = serde_json::to_value(&req)
+                        .ok()
+                        .and_then(|v| v.get("cmd").and_then(|c| c.as_str()).map(String::from))
+                        .unwrap_or_else(|| "<unknown>".into());
+                    debug!(cmd = %cmd_tag, "IPC request received");
                     handler(req).await
                 }
                 Err(e) => IpcResponse::error(format!("parse error: {}", e)),
@@ -389,6 +450,8 @@ pub mod client {
         }
 
         /// Send a request and receive one response.
+        /// A 10-second timeout guards against a hung daemon causing the CLI
+        /// to block indefinitely (HIGH-04).
         pub async fn request(&mut self, req: &IpcRequest) -> Result<IpcResponse> {
             let (reader, mut writer) = self.stream.split();
             let mut reader = BufReader::new(reader);
@@ -398,7 +461,10 @@ pub mod client {
             writer.write_all(&req_bytes).await.context("IPC write")?;
 
             let mut line = String::new();
-            reader.read_line(&mut line).await.context("IPC read")?;
+            tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line))
+                .await
+                .with_context(|| "daemon did not respond within 10 s")?
+                .context("IPC read")?;
             serde_json::from_str(&line).context("IPC response parse")
         }
     }
@@ -467,7 +533,7 @@ pub mod client {
                                 Ok(_)  => IpcResponse::ok_empty(),
                                 Err(e) => IpcResponse::err(e.to_string()),
                             },
-                            None => IpcResponse::err("invalid device id".into()),
+                            None => IpcResponse::err("invalid device id"),
                         }
                     }
                     IpcRequest::RejectPeer { device_id } => {
@@ -479,15 +545,409 @@ pub mod client {
                                 Ok(_)  => IpcResponse::ok_empty(),
                                 Err(e) => IpcResponse::err(e.to_string()),
                             },
-                            None => IpcResponse::err("invalid device id".into()),
+                            None => IpcResponse::err("invalid device id"),
                         }
                     }
-                    _ => IpcResponse::err("not supported in embedded mode".into()),
+                    IpcRequest::Ping => IpcResponse::ok_empty(),
+                    IpcRequest::Shutdown => {
+                        std::process::exit(0);
+                    }
+                    // ── Metrics ────────────────────────────────────────────────────────
+                    IpcRequest::GetMetrics => {
+                        let snap = eng.status_snapshot().await;
+                        IpcResponse::ok(serde_json::json!({
+                            "connected_peers": snap.peers.len(),
+                            "sync_eligible": snap.peers.iter().filter(|p| p.is_sync_eligible()).count(),
+                            "device_id": eng.device_id().await,
+                        }))
+                    }
+                    // ── History ────────────────────────────────────────────────────────
+                    IpcRequest::History { last } => {
+                        IpcResponse::ok(eng.history_recent(last).await)
+                    }
+                    IpcRequest::HistorySearch { query, limit } => {
+                        IpcResponse::ok(eng.history_search(query, limit).await)
+                    }
+                    IpcRequest::HistoryRepush { id, target } => {
+                        let tgt = match target {
+                            Some(ref s) => match crate::ipc::parse_uuid(s) {
+                                Ok(uid) => crate::engine::SyncTarget::Device(uid),
+                                Err(_) => return IpcResponse::err("invalid target device id"),
+                            },
+                            None => crate::engine::SyncTarget::All,
+                        };
+                        match eng.history_repush(id, tgt).await {
+                            Ok(_) => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::HistoryPin { id, pinned } => {
+                        match eng.history_set_pinned(id, pinned).await {
+                            Ok(_) => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::HistoryDelete { id } => {
+                        match eng.history_delete(id).await {
+                            Ok(removed) => {
+                                if removed { IpcResponse::ok_empty() }
+                                else { IpcResponse::err("entry not found") }
+                            }
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::HistoryClear => {
+                        match eng.history_clear().await {
+                            Ok(_) => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::HistoryExportCsv => {
+                        IpcResponse::ok(eng.history_export_csv().await)
+                    }
+                    IpcRequest::HistoryExportJson => {
+                        match eng.history_export_json().await {
+                            Ok(json) => IpcResponse::ok(json),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::HistoryStats => {
+                        IpcResponse::ok(eng.history_stats().await)
+                    }
+                    IpcRequest::HistoryTag { id, tag } => {
+                        match eng.history_add_tag(id, tag).await {
+                            Ok(_) => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::HistoryUntag { id, tag } => {
+                        match eng.history_remove_tag(id, tag).await {
+                            Ok(_) => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::HistoryFilteredList {
+                        kind, device, from_secs, to_secs, tag, limit, pinned_only
+                    } => {
+                        IpcResponse::ok(
+                            eng.history_filtered(kind, device, from_secs, to_secs, tag, limit, pinned_only).await
+                        )
+                    }
+                    IpcRequest::RememberText { text } => {
+                        match eng.remember_text(text).await {
+                            Ok(_) => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::IncomingClipboard { id } => {
+                        IpcResponse::ok(eng.incoming_clipboard(id).await)
+                    }
+                    // ── Peer management ────────────────────────────────────────────────
+                    IpcRequest::DisconnectPeer { device_id } => {
+                        match crate::ipc::parse_uuid(&device_id)
+                            .ok()
+                            .map(|id| eng.disconnect_peer(id))
+                        {
+                            Some(fut) => match fut.await {
+                                Ok(true)  => IpcResponse::ok_empty(),
+                                Ok(false) => IpcResponse::err("peer not connected"),
+                                Err(e)    => IpcResponse::err(e.to_string()),
+                            },
+                            None => IpcResponse::err("invalid device id"),
+                        }
+                    }
+                    IpcRequest::RevokeTrustedDevice { device_id } => {
+                        match crate::ipc::parse_uuid(&device_id)
+                            .ok()
+                            .map(|id| eng.revoke_peer(id))
+                        {
+                            Some(fut) => match fut.await {
+                                Ok(true)  => IpcResponse::ok_empty(),
+                                Ok(false) => IpcResponse::err("device not found"),
+                                Err(e)    => IpcResponse::err(e.to_string()),
+                            },
+                            None => IpcResponse::err("invalid device id"),
+                        }
+                    }
+                    IpcRequest::PauseSyncPeer { device_id } => {
+                        match crate::ipc::parse_uuid(&device_id)
+                            .ok()
+                            .map(|id| eng.pause_sync_peer(id))
+                        {
+                            Some(fut) => match fut.await {
+                                Ok(_)  => IpcResponse::ok_empty(),
+                                Err(e) => IpcResponse::err(e.to_string()),
+                            },
+                            None => IpcResponse::err("invalid device id"),
+                        }
+                    }
+                    IpcRequest::ResumeSyncPeer { device_id } => {
+                        match crate::ipc::parse_uuid(&device_id)
+                            .ok()
+                            .map(|id| eng.resume_sync_peer(id))
+                        {
+                            Some(fut) => match fut.await {
+                                Ok(_)  => IpcResponse::ok_empty(),
+                                Err(e) => IpcResponse::err(e.to_string()),
+                            },
+                            None => IpcResponse::err("invalid device id"),
+                        }
+                    }
+                    IpcRequest::ForgetDevice { device_id } => {
+                        match crate::ipc::parse_uuid(&device_id)
+                            .ok()
+                            .map(|id| eng.forget_device(id))
+                        {
+                            Some(fut) => match fut.await {
+                                Ok(true)  => IpcResponse::ok_empty(),
+                                Ok(false) => IpcResponse::err("device not found"),
+                                Err(e)    => IpcResponse::err(e.to_string()),
+                            },
+                            None => IpcResponse::err("invalid device id"),
+                        }
+                    }
+                    IpcRequest::SetAutoConnect { device_id, enabled } => {
+                        match crate::ipc::parse_uuid(&device_id)
+                            .ok()
+                            .map(|id| eng.set_auto_connect(id, enabled))
+                        {
+                            Some(fut) => match fut.await {
+                                Ok(_)  => IpcResponse::ok_empty(),
+                                Err(e) => IpcResponse::err(e.to_string()),
+                            },
+                            None => IpcResponse::err("invalid device id"),
+                        }
+                    }
+                    IpcRequest::RenameTrustedDevice { device_id, display_name } => {
+                        match crate::ipc::parse_uuid(&device_id)
+                            .ok()
+                            .map(|id| eng.rename_trusted_device(id, display_name.clone()))
+                        {
+                            Some(fut) => match fut.await {
+                                Ok(_)  => IpcResponse::ok_empty(),
+                                Err(e) => IpcResponse::err(e.to_string()),
+                            },
+                            None => IpcResponse::err("invalid device id"),
+                        }
+                    }
+                    IpcRequest::DeviceDetails { device_id } => {
+                        match crate::ipc::parse_uuid(&device_id) {
+                            Ok(id) => IpcResponse::ok(eng.device_details(id).await),
+                            Err(_) => IpcResponse::err("invalid device id"),
+                        }
+                    }
+                    IpcRequest::ConnectManual { host, port } => {
+                        let p = port.unwrap_or(eng.current_settings().await.port);
+                        match eng.connect_to_peer(host, p).await {
+                            Ok(()) => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::GetPeerSettings { device_id } => {
+                        match crate::ipc::parse_uuid(&device_id) {
+                            Ok(id) => IpcResponse::ok(eng.get_peer_settings(id).await),
+                            Err(_) => IpcResponse::err("invalid device id"),
+                        }
+                    }
+                    IpcRequest::PatchPeerSettings { device_id, patch } => {
+                        match crate::ipc::parse_uuid(&device_id) {
+                            Ok(id) => match eng.patch_peer_settings(id, patch).await {
+                                Ok(_)  => IpcResponse::ok_empty(),
+                                Err(e) => IpcResponse::err(e.to_string()),
+                            },
+                            Err(_) => IpcResponse::err("invalid device id"),
+                        }
+                    }
+                    // ── Push operations ────────────────────────────────────────────────
+                    IpcRequest::PushText { text } => {
+                        let content = crate::protocol::ClipboardContent::Text(text);
+                        let n = eng.push_clipboard(content).await;
+                        IpcResponse::ok(serde_json::json!({ "delivered": n }))
+                    }
+                    IpcRequest::PushTextTo { text, target } => {
+                        match crate::ipc::parse_uuid(&target) {
+                            Ok(id) => {
+                                let content = crate::protocol::ClipboardContent::Text(text);
+                                eng.push_clipboard_to(content, crate::engine::SyncTarget::Device(id)).await;
+                                IpcResponse::ok_empty()
+                            }
+                            Err(_) => IpcResponse::err("invalid target device id"),
+                        }
+                    }
+                    IpcRequest::PushImage { mime, data_base64 } => {
+                        match crate::ipc::decode_base64(&data_base64) {
+                            Ok(data) => {
+                                let content = crate::protocol::ClipboardContent::Image { mime, data };
+                                let n = eng.push_clipboard(content).await;
+                                IpcResponse::ok(serde_json::json!({ "delivered": n }))
+                            }
+                            Err(e) => IpcResponse::err(format!("base64 decode: {}", e)),
+                        }
+                    }
+                    IpcRequest::PushFile { name, data_base64 } => {
+                        match crate::ipc::decode_base64(&data_base64) {
+                            Ok(data) => {
+                                let content = crate::protocol::ClipboardContent::File { name, data };
+                                let n = eng.push_clipboard(content).await;
+                                IpcResponse::ok(serde_json::json!({ "delivered": n }))
+                            }
+                            Err(e) => IpcResponse::err(format!("base64 decode: {}", e)),
+                        }
+                    }
+                    IpcRequest::PushClipboardHash { hash, target_device_id } => {
+                        let tgt = match target_device_id {
+                            Some(ref s) => match crate::ipc::parse_uuid(s) {
+                                Ok(id) => crate::engine::SyncTarget::Device(id),
+                                Err(_) => return IpcResponse::err("invalid target device id"),
+                            },
+                            None => crate::engine::SyncTarget::All,
+                        };
+                        match eng.repush_clipboard_hash(hash, tgt).await {
+                            Ok(_)  => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::PushClipboard { target_device_id } => {
+                        let tgt = match target_device_id {
+                            Some(ref s) => match crate::ipc::parse_uuid(s) {
+                                Ok(id) => crate::engine::SyncTarget::Device(id),
+                                Err(_) => return IpcResponse::err("invalid target device id"),
+                            },
+                            None => crate::engine::SyncTarget::All,
+                        };
+                        match eng.push_current_clipboard(tgt).await {
+                            Ok(_)  => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    // ── File transfers ─────────────────────────────────────────────────
+                    IpcRequest::SendFile { name, mime, data_base64, target_device } => {
+                        let tgt = match target_device {
+                            Some(ref s) => match crate::ipc::parse_uuid(s) {
+                                Ok(id) => Some(id),
+                                Err(_) => return IpcResponse::err("invalid target device id"),
+                            },
+                            None => None,
+                        };
+                        match crate::ipc::decode_base64(&data_base64) {
+                            Ok(data) => match eng.send_file(data, name, mime, tgt).await {
+                                Ok(_)  => IpcResponse::ok_empty(),
+                                Err(e) => IpcResponse::err(e.to_string()),
+                            },
+                            Err(e) => IpcResponse::err(format!("base64 decode: {}", e)),
+                        }
+                    }
+                    IpcRequest::AcceptFileTransfer { transfer_id } => {
+                        match crate::ipc::parse_transfer_id(&transfer_id) {
+                            Ok(id) => match eng.accept_file_transfer(id).await {
+                                Ok(_)  => IpcResponse::ok_empty(),
+                                Err(e) => IpcResponse::err(e.to_string()),
+                            },
+                            Err(_) => IpcResponse::err("invalid transfer id"),
+                        }
+                    }
+                    IpcRequest::RejectFileTransfer { transfer_id, reason } => {
+                        match crate::ipc::parse_transfer_id(&transfer_id) {
+                            Ok(id) => match eng.reject_file_transfer(id, reason).await {
+                                Ok(_)  => IpcResponse::ok_empty(),
+                                Err(e) => IpcResponse::err(e.to_string()),
+                            },
+                            Err(_) => IpcResponse::err("invalid transfer id"),
+                        }
+                    }
+                    IpcRequest::CancelFileTransfer { transfer_id } => {
+                        match crate::ipc::parse_transfer_id(&transfer_id) {
+                            Ok(id) => match eng.cancel_file_transfer(id).await {
+                                Ok(_)  => IpcResponse::ok_empty(),
+                                Err(e) => IpcResponse::err(e.to_string()),
+                            },
+                            Err(_) => IpcResponse::err("invalid transfer id"),
+                        }
+                    }
+                    // ── Settings ───────────────────────────────────────────────────────
+                    IpcRequest::GetSettings => {
+                        IpcResponse::ok(eng.current_settings().await)
+                    }
+                    IpcRequest::PatchSettings { patch } => {
+                        match eng.patch_settings(patch).await {
+                            Ok(_)  => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::SetSyncEnabled { enabled } => {
+                        eng.set_sync_enabled(enabled).await;
+                        IpcResponse::ok_empty()
+                    }
+                    IpcRequest::SetTimelineFirstMode { enabled } => {
+                        eng.set_timeline_first_mode(enabled).await;
+                        IpcResponse::ok_empty()
+                    }
+                    IpcRequest::SetAutoApplyClipboard { enabled } => {
+                        eng.set_auto_apply_clipboard(enabled).await;
+                        IpcResponse::ok_empty()
+                    }
+                    IpcRequest::SaveSettings {
+                        port, device_name, sync_enabled, sync_text, sync_images, sync_files,
+                        history_limit, max_history_text_bytes, max_payload_bytes,
+                        clipboard_poll_ms, max_pushes_per_sec, rate_limit_burst,
+                        smart_sync_duplicate_window_ms, smart_sync_debounce_ms,
+                        block_sensitive_text, require_tofu_confirmation,
+                        show_receive_notification, ignore_patterns,
+                    } => {
+                        match eng.save_settings_partial(crate::ipc::PartialSettings {
+                            port, device_name, sync_enabled, sync_text, sync_images, sync_files,
+                            history_limit, max_history_text_bytes, max_payload_bytes,
+                            clipboard_poll_ms, max_pushes_per_sec, rate_limit_burst,
+                            smart_sync_duplicate_window_ms, smart_sync_debounce_ms,
+                            block_sensitive_text, require_tofu_confirmation,
+                            show_receive_notification, ignore_patterns,
+                        }).await {
+                            Ok(_)  => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    // ── Templates ──────────────────────────────────────────────────────
+                    IpcRequest::TemplateList => {
+                        IpcResponse::ok(eng.template_list().await)
+                    }
+                    IpcRequest::TemplatePush { name, target_device } => {
+                        let tgt = match target_device {
+                            Some(ref s) => match crate::ipc::parse_uuid(s) {
+                                Ok(id) => crate::engine::SyncTarget::Device(id),
+                                Err(_) => return IpcResponse::err("invalid target device id"),
+                            },
+                            None => crate::engine::SyncTarget::All,
+                        };
+                        match eng.template_push(name, tgt).await {
+                            Ok(_)  => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::TemplateSet { name, text, description } => {
+                        match eng.template_set(name, text, description).await {
+                            Ok(_)  => IpcResponse::ok_empty(),
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    IpcRequest::TemplateRemove { name } => {
+                        match eng.template_remove(name).await {
+                            Ok(found) => {
+                                if found { IpcResponse::ok_empty() }
+                                else { IpcResponse::err("template not found") }
+                            }
+                            Err(e) => IpcResponse::err(e.to_string()),
+                        }
+                    }
+                    // ── Feedback ───────────────────────────────────────────────────────
+                    IpcRequest::Feedback { last } => {
+                        IpcResponse::ok(eng.feedback_recent(last).await)
+                    }
+                    _ => IpcResponse::err("not supported in this build"),
                 }
             }
         });
-        spawn(handler).await
-    } (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+        super::server::spawn(handler).await
+    }
 }
 
 // ── Windows named pipe stubs ──────────────────────────────────────────────────

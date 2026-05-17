@@ -165,9 +165,9 @@ struct QuickAccessHistoryView: View {
     }
 
     private func navigate(_ delta: Int) {
-        let max = flatResults.count - 1
-        guard max >= 0 else { return }
-        selectedIndex = min(max, max(0, selectedIndex + delta))
+        let upperBound = flatResults.count - 1
+        guard upperBound >= 0 else { return }
+        selectedIndex = Swift.min(upperBound, Swift.max(0, selectedIndex + delta))
     }
 
     private func runSelected() {
@@ -239,6 +239,7 @@ private struct QAGroupLabel: View {
 private struct QuickSendStrip: View {
     @ObservedObject var store: ClipRelayStore
     let context: QuickSendContext
+    private var connectedDevices: [ManagedDevice] { store.connectedDevices }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
@@ -263,30 +264,7 @@ private struct QuickSendStrip: View {
                 .foregroundStyle(Color(white: 1, opacity: 0.80))
                 .lineLimit(2).fixedSize(horizontal: false, vertical: true)
 
-            if !store.connectedDevices.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(store.connectedDevices) { device in
-                            Button {
-                                store.sendQuickContext(to: device)
-                            } label: {
-                                HStack(spacing: 5) {
-                                    Image(systemName: "desktopcomputer").font(.system(size: 9.5))
-                                    Text(device.name).font(.system(size: 11, weight: .medium))
-                                }
-                                .foregroundStyle(.white.opacity(0.82))
-                                .padding(.horizontal, 9).padding(.vertical, 5)
-                                .background {
-                                    Capsule()
-                                        .fill(Color(white: 1, opacity: 0.09))
-                                        .overlay { Capsule().strokeBorder(Color(white: 1, opacity: 0.11), lineWidth: 0.5) }
-                                }
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
+            quickSendTargets
         }
         .padding(12)
         .background {
@@ -296,6 +274,34 @@ private struct QuickSendStrip: View {
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
                         .strokeBorder(CRTheme.brandElectric.opacity(0.17), lineWidth: 0.5)
                 }
+        }
+    }
+
+    @ViewBuilder
+    private var quickSendTargets: some View {
+        if !connectedDevices.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(connectedDevices) { device in
+                        Button {
+                            store.sendQuickContext(to: device)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "desktopcomputer").font(.system(size: 9.5))
+                                Text(device.name).font(.system(size: 11, weight: .medium))
+                            }
+                            .foregroundStyle(.white.opacity(0.82))
+                            .padding(.horizontal, 9).padding(.vertical, 5)
+                            .background {
+                                Capsule()
+                                    .fill(Color(white: 1, opacity: 0.09))
+                                    .overlay { Capsule().strokeBorder(Color(white: 1, opacity: 0.11), lineWidth: 0.5) }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
 }

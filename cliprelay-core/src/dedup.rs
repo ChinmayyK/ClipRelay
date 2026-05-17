@@ -379,3 +379,4 @@ mod tests {
         assert_eq!(dedup.stats().sends_allowed, 0);
         assert_eq!(dedup.stats().total_suppressed(), 0);
     }
+}

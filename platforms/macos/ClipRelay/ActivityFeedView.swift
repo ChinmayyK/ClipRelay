@@ -518,8 +518,10 @@ struct FileTransferBanner: View {
         switch transfer.status {
         case .incoming:     return "arrow.down.circle"
         case .transferring: return "arrow.down.circle.fill"
+        case .verifying:    return "checkmark.seal"
         case .complete:     return "checkmark.circle.fill"
         case .failed:       return "xmark.circle.fill"
+        case .cancelled:    return "minus.circle.fill"
         }
     }
 

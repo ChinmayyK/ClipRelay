@@ -264,3 +264,4 @@ mod tests {
         assert_eq!(result.unwrap(), 42);
         assert_eq!(calls.load(Ordering::Relaxed), 2);
     }
+}

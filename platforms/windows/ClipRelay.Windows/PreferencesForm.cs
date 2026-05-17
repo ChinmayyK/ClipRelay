@@ -114,7 +114,7 @@ namespace ClipRelay.Windows
                     require_tofu_confirmation   = _chkTofu.Checked,
                     show_receive_notification   = _chkNotifications.Checked,
                 });
-            }); (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+            });
         }
 
         private void UpdateEnabledState()

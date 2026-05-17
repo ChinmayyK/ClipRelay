@@ -215,10 +215,16 @@ impl InboundTransfer {
 
     /// Accept the transfer, setting up paths.
     pub fn accept(&mut self, save_dir: &Path) -> Result<()> {
+        // Strip any directory separators or traversal components from the
+        // sender-supplied file name to prevent a malicious peer from writing
+        // outside save_dir via "../../../etc/passwd" style names.
+        let safe_name = sanitize_file_name(&self.meta.file_name);
+        anyhow::ensure!(!safe_name.is_empty(), "file name is empty after sanitization");
+
         let uid = hex::encode(&self.transfer_id[..4]);
-        let tmp_name = format!(".cliprelay_tmp_{uid}_{}", self.meta.file_name);
+        let tmp_name = format!(".cliprelay_tmp_{uid}_{safe_name}");
         self.tmp_path = Some(save_dir.join(&tmp_name));
-        self.dest_path = Some(unique_dest_path(save_dir, &self.meta.file_name));
+        self.dest_path = Some(unique_dest_path(save_dir, &safe_name));
         self.status = TransferStatus::Transferring;
         self.started_at = Some(Instant::now());
         Ok(())
@@ -301,10 +307,10 @@ impl InboundTransfer {
 
     /// Should we send a chunk ack now?
     pub fn should_ack(&self) -> bool {
+        // `is_multiple_of` was stabilised in Rust 1.75 — using % avoids a
+        // silent build failure on older toolchains (HIGH-01).
         self.last_confirmed_chunk > 0
-            && self
-                .last_confirmed_chunk
-                .is_multiple_of(FILE_ACK_EVERY_N_CHUNKS)
+            && self.last_confirmed_chunk % FILE_ACK_EVERY_N_CHUNKS == 0
     }
 }
 
@@ -465,6 +471,37 @@ impl FileTransferManager {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Strip path traversal components and directory separators from a
+/// sender-supplied file name so it can never escape `save_dir` (MED-04).
+///
+/// Rules applied (in order):
+/// 1. Take only the last path component (basename) — removes `../` prefixes.
+/// 2. Remove any remaining `/` or `\` characters.
+/// 3. Strip leading dots to avoid hidden files (e.g. `.bashrc`).
+/// 4. If the result is empty or is a reserved name, substitute "file".
+fn sanitize_file_name(name: &str) -> String {
+    // Take the basename only.
+    let base = std::path::Path::new(name)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or(name);
+
+    // Remove remaining separators and control characters.
+    let sanitized: String = base
+        .chars()
+        .filter(|&c| c != '/' && c != '\\' && c != '\0')
+        .collect();
+
+    // Trim leading dots (hidden file prevention).
+    let trimmed = sanitized.trim_start_matches('.');
+
+    if trimmed.is_empty() {
+        "file".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
 
 /// Compute a non-colliding destination path (appends (1), (2), etc. if needed).
 fn unique_dest_path(dir: &Path, file_name: &str) -> PathBuf {

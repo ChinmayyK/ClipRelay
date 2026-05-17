@@ -120,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Store bindings
 
     private func bindStore() {
-        store.$connectionBanner
+        store.$statusLine
             .receive(on: RunLoop.main)
             .sink { [weak self] banner in
                 self?.statusMenuItem.title = banner

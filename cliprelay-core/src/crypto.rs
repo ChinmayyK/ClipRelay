@@ -122,10 +122,25 @@ impl EphemeralKeypair {
         let peer_public = PublicKey::from(peer_pubkey_bytes);
         let shared = secret.diffie_hellman(&peer_public);
 
-        // HKDF-SHA256: IKM = shared secret, salt = none, info = "cliprelay-v1"
-        let hk = Hkdf::<Sha256>::new(None, shared.as_bytes());
+        // Copy the shared secret bytes so we can zeroize them independently of
+        // the opaque `SharedSecret` wrapper (which provides no zeroize method).
+        let mut shared_bytes: [u8; 32] = *shared.as_bytes();
+
+        // HKDF-SHA256: IKM = shared secret, salt = none.
+        // The info string is prefixed with the protocol version so that HKDF
+        // output is domain-separated across wire-format revisions (LOW-03).
+        // Changing PROTOCOL_VERSION in protocol.rs automatically invalidates
+        // old session keys — peers on different protocol versions cannot
+        // decrypt each other's frames even if they share an ephemeral key.
+        let info = format!("cliprelay-v{}-session", crate::protocol::PROTOCOL_VERSION);
+        let hk = Hkdf::<Sha256>::new(None, &shared_bytes);
+
+        // Zeroize the raw DH secret immediately after feeding it into HKDF;
+        // it must not linger in process memory (CRIT-02).
+        shared_bytes.zeroize();
+
         let mut okm = [0u8; 32];
-        hk.expand(b"cliprelay-v1-session", &mut okm)
+        hk.expand(info.as_bytes(), &mut okm)
             .map_err(|_| anyhow::anyhow!("HKDF expand failed"))?;
 
         let key = SessionKey {
@@ -173,10 +188,22 @@ impl SessionKey {
         let (nonce_bytes, ct) = frame.split_at(12);
         let nonce = Nonce::from_slice(nonce_bytes);
 
-        // Replay protection: nonce counter must be >= expected
+        // Replay protection: nonce counter must be exactly the next expected
+        // value. Using strict equality (== recv_counter) instead of >=
+        // prevents replay of any previously seen or skipped frame — a captured
+        // frame can never satisfy counter == recv_counter once it has been
+        // incremented past it.
         let counter = u64::from_be_bytes(nonce_bytes[..8].try_into().unwrap());
-        anyhow::ensure!(counter >= self.recv_counter, "replayed frame");
-        self.recv_counter = counter + 1;
+        anyhow::ensure!(
+            counter == self.recv_counter,
+            "replayed or out-of-order frame: got counter {}, expected {}",
+            counter,
+            self.recv_counter
+        );
+        self.recv_counter = self
+            .recv_counter
+            .checked_add(1)
+            .context("recv counter overflow")?;
 
         self.cipher
             .decrypt(nonce, ct)

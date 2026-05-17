@@ -5,7 +5,7 @@
 #           systemctl --user enable --now cliprelay
 #
 # Logs:    journalctl --user -u cliprelay -f
-# Status:  systemctl --user status cliprelay (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+# Status:  systemctl --user status cliprelay
 
 [Unit]
 Description=ClipRelay — Proximity-Based Shared Clipboard
@@ -14,7 +14,7 @@ Documentation=https://github.com/cliprelay/cliprelay
 After=network-online.target
 Wants=network-online.target
 # Restart after graphical session is available so clipboard access works.
-After=graphical-session.target (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+After=graphical-session.target
 
 [Service]
 Type=simple
@@ -22,7 +22,7 @@ ExecStart=/usr/local/bin/cliprelay-gtk
 Restart=on-failure
 RestartSec=5s
 # Give the process up to 10 s to start responding before systemd considers it failed.
-TimeoutStartSec=10s (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+TimeoutStartSec=10s
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=cliprelay
@@ -69,7 +69,7 @@ Environment=CLIPRELAY_LOG=info
 Environment=RUST_BACKTRACE=0
 # State and runtime paths for the engine.
 Environment=CLIPRELAY_STATE_DIR=%S/cliprelay
-Environment=CLIPRELAY_RUNTIME_DIR=%t/cliprelay (feat: enhance core daemon, FFI, and IPC; major updates to Windows and Linux platform implementations)
+Environment=CLIPRELAY_RUNTIME_DIR=%t/cliprelay
 
 [Install]
 WantedBy=default.target

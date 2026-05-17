@@ -35,6 +35,7 @@ pub mod crypto;
 pub mod dedup;
 pub mod discovery;
 pub mod engine;
+pub mod engine_support;
 pub mod ffi;
 pub mod file_transfer;
 pub mod filter;

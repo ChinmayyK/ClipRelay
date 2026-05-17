@@ -38,9 +38,13 @@ struct Bucket {
 
 impl Bucket {
     fn new(rate_bps: u64, burst_bytes: u64) -> Self {
+        // Clamp burst_bytes to at least 1 to avoid a 0-capacity bucket which
+        // produces NaN/Inf token arithmetic and makes every acquire block
+        // indefinitely (LOW-02).
+        let burst = burst_bytes.max(1);
         Self {
-            tokens: burst_bytes as f64,
-            capacity: burst_bytes as f64,
+            tokens: burst as f64,
+            capacity: burst as f64,
             rate: rate_bps as f64,
             last_refill: Instant::now(),
             enabled: true,
@@ -131,7 +135,8 @@ impl Throttle {
     pub async fn set_rate(&self, rate_bps: u64, burst_bytes: u64) {
         let mut b = self.bucket.lock().await;
         b.rate = rate_bps as f64;
-        b.capacity = burst_bytes as f64;
+        // Clamp burst to at least 1 — see Bucket::new (LOW-02).
+        b.capacity = burst_bytes.max(1) as f64;
         b.tokens = b.tokens.min(b.capacity);
     }
 
