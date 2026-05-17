@@ -122,7 +122,7 @@ jobs:
             -o platforms/android/app/src/main/jniLibs \
             build --lib --release -p cliprelay-core
         env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/26.1.10909125
+          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/26.1.10909125
 
       - name: Build APK
         run: ./gradlew assembleRelease
