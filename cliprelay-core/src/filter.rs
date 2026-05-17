@@ -447,10 +447,10 @@ impl Default for SensitiveTextFilter {
                 "\"private_key_id\":",
                 // GitHub
                 "github_pat_",
-                "ghp_",   // classic PAT
-                "gho_",   // OAuth token
-                "ghs_",   // Actions token
-                "ghr_",   // refresh token
+                "ghp_", // classic PAT
+                "gho_", // OAuth token
+                "ghs_", // Actions token
+                "ghr_", // refresh token
                 // Slack
                 "xoxb-",
                 "xoxp-",
@@ -676,20 +676,44 @@ mod tests {
 
     #[test]
     fn sensitive_text_blocks_stripe_key() {
-        let f = SensitiveTextFilter { enabled: true, ..Default::default() };
-        assert!(matches!(f.check(&text(&format!("{}_{}", "sk", "live_AbCdEfGhIjKlMnOpQrStUvWx"))), Verdict::Deny { .. }));
-        assert!(matches!(f.check(&text(&format!("{}_{}", "sk", "test_AbCdEfGhIjKlMnOpQrStUvWx"))), Verdict::Deny { .. }));
+        let f = SensitiveTextFilter {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            f.check(&text(&format!(
+                "{}_{}",
+                "sk", "live_AbCdEfGhIjKlMnOpQrStUvWx"
+            ))),
+            Verdict::Deny { .. }
+        ));
+        assert!(matches!(
+            f.check(&text(&format!(
+                "{}_{}",
+                "sk", "test_AbCdEfGhIjKlMnOpQrStUvWx"
+            ))),
+            Verdict::Deny { .. }
+        ));
     }
 
     #[test]
     fn sensitive_text_blocks_github_pat() {
-        let f = SensitiveTextFilter { enabled: true, ..Default::default() };
-        assert!(matches!(f.check(&text("ghp_A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6")), Verdict::Deny { .. }));
+        let f = SensitiveTextFilter {
+            enabled: true,
+            ..Default::default()
+        };
+        assert!(matches!(
+            f.check(&text("ghp_A1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6")),
+            Verdict::Deny { .. }
+        ));
     }
 
     #[test]
     fn sensitive_text_blocks_high_entropy_token() {
-        let f = SensitiveTextFilter { enabled: true, ..Default::default() };
+        let f = SensitiveTextFilter {
+            enabled: true,
+            ..Default::default()
+        };
         // 40-char hex string like a Git SHA or random token — high entropy, no spaces.
         let token = "a3f9c2e1b4d7e0f5c8a2b9d1e6f3c0a7b4e2d9f1";
         assert!(matches!(f.check(&text(token)), Verdict::Deny { .. }));
@@ -697,14 +721,26 @@ mod tests {
 
     #[test]
     fn sensitive_text_allows_normal_prose() {
-        let f = SensitiveTextFilter { enabled: true, ..Default::default() };
-        assert_eq!(f.check(&text("The quick brown fox jumps over the lazy dog")), Verdict::Allow);
-        assert_eq!(f.check(&text("Meeting at 3pm in conference room B")), Verdict::Allow);
+        let f = SensitiveTextFilter {
+            enabled: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            f.check(&text("The quick brown fox jumps over the lazy dog")),
+            Verdict::Allow
+        );
+        assert_eq!(
+            f.check(&text("Meeting at 3pm in conference room B")),
+            Verdict::Allow
+        );
     }
 
     #[test]
     fn sensitive_text_blocks_jwt() {
-        let f = SensitiveTextFilter { enabled: true, ..Default::default() };
+        let f = SensitiveTextFilter {
+            enabled: true,
+            ..Default::default()
+        };
         let jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
         assert!(matches!(f.check(&text(jwt)), Verdict::Deny { .. }));
     }
@@ -791,8 +827,14 @@ mod tests {
     #[test]
     fn url_only_denies_plain_text() {
         let f = UrlOnlyFilter;
-        assert!(matches!(f.check(&text("hello world")), Verdict::Deny { .. }));
-        assert!(matches!(f.check(&text("meeting at 3pm")), Verdict::Deny { .. }));
+        assert!(matches!(
+            f.check(&text("hello world")),
+            Verdict::Deny { .. }
+        ));
+        assert!(matches!(
+            f.check(&text("meeting at 3pm")),
+            Verdict::Deny { .. }
+        ));
     }
 
     #[test]
@@ -807,7 +849,10 @@ mod tests {
     #[test]
     fn glob_star_matches_any() {
         let f = GlobPatternFilter::new(vec!["secret*".into()]);
-        assert!(matches!(f.check(&text("secret_value_123")), Verdict::Deny { .. }));
+        assert!(matches!(
+            f.check(&text("secret_value_123")),
+            Verdict::Deny { .. }
+        ));
         assert!(matches!(f.check(&text("secretabc")), Verdict::Deny { .. }));
         assert_eq!(f.check(&text("public value")), Verdict::Allow);
     }
@@ -823,7 +868,10 @@ mod tests {
     #[test]
     fn glob_case_insensitive() {
         let f = GlobPatternFilter::new(vec!["password*".into()]);
-        assert!(matches!(f.check(&text("PASSWORD=hunter2")), Verdict::Deny { .. }));
+        assert!(matches!(
+            f.check(&text("PASSWORD=hunter2")),
+            Verdict::Deny { .. }
+        ));
     }
 
     #[test]

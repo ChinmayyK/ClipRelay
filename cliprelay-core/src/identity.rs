@@ -229,12 +229,32 @@ mod tests {
         let display = k.fingerprint_display();
         // Format: 8 groups of 4 hex chars, separated by colons.
         // Total length: 8*4 + 7 = 39 characters.
-        assert_eq!(display.len(), 39, "fingerprint display has wrong length: {}", display);
+        assert_eq!(
+            display.len(),
+            39,
+            "fingerprint display has wrong length: {}",
+            display
+        );
         let parts: Vec<&str> = display.split(':').collect();
-        assert_eq!(parts.len(), 8, "expected 8 colon-separated groups: {}", display);
+        assert_eq!(
+            parts.len(),
+            8,
+            "expected 8 colon-separated groups: {}",
+            display
+        );
         for part in &parts {
-            assert_eq!(part.len(), 4, "each group must be 4 chars, got '{}' in '{}'", part, display);
-            assert!(part.chars().all(|c| c.is_ascii_hexdigit()), "non-hex char in '{}'", display);
+            assert_eq!(
+                part.len(),
+                4,
+                "each group must be 4 chars, got '{}' in '{}'",
+                part,
+                display
+            );
+            assert!(
+                part.chars().all(|c| c.is_ascii_hexdigit()),
+                "non-hex char in '{}'",
+                display
+            );
         }
     }
 

@@ -199,8 +199,8 @@ impl Default for Settings {
             rate_limit_burst: 3.0,
             smart_sync_duplicate_window_ms: 1_500,
             smart_sync_debounce_ms: 150,
-            timeline_first_mode: true,
-            auto_apply_remote_clipboard: false,
+            timeline_first_mode: false,
+            auto_apply_remote_clipboard: true,
             auto_apply_allowed_devices: Vec::new(),
             auto_apply_debounce_ms: 500,
             auto_accept_file_transfers: true,
@@ -244,13 +244,23 @@ impl Settings {
         } else {
             s.port
         };
-        s.history_limit = s.history_limit.clamp(MIN_HISTORY_ENTRIES, MAX_HISTORY_ENTRIES);
+        s.history_limit = s
+            .history_limit
+            .clamp(MIN_HISTORY_ENTRIES, MAX_HISTORY_ENTRIES);
         s.max_history_text_bytes = s.max_history_text_bytes.clamp(1024, 4 * 1024 * 1024);
         // Minimum 10 ms poll to prevent busy-loop.
         s.clipboard_poll_ms = s.clipboard_poll_ms.max(10);
         // Rate limits must be positive.
-        s.max_pushes_per_sec = if s.max_pushes_per_sec <= 0.0 { 1.0 } else { s.max_pushes_per_sec.min(100.0) };
-        s.rate_limit_burst = if s.rate_limit_burst <= 0.0 { 1.0 } else { s.rate_limit_burst.min(50.0) };
+        s.max_pushes_per_sec = if s.max_pushes_per_sec <= 0.0 {
+            1.0
+        } else {
+            s.max_pushes_per_sec.min(100.0)
+        };
+        s.rate_limit_burst = if s.rate_limit_burst <= 0.0 {
+            1.0
+        } else {
+            s.rate_limit_burst.min(50.0)
+        };
         s.smart_sync_debounce_ms = s.smart_sync_debounce_ms.min(5_000);
         s.smart_sync_duplicate_window_ms = s.smart_sync_duplicate_window_ms.min(30_000);
         s.auto_apply_debounce_ms = s.auto_apply_debounce_ms.min(10_000);
@@ -290,7 +300,8 @@ impl Settings {
         // Warn about insecure combinations.
         if !self.require_tofu_confirmation {
             errors.push(
-                "require_tofu_confirmation is false — devices will be auto-trusted (security risk)".into(),
+                "require_tofu_confirmation is false — devices will be auto-trusted (security risk)"
+                    .into(),
             );
         }
         errors
@@ -468,10 +479,12 @@ mod tests {
         let s = Settings::default();
         let errs = s.validate();
         // All defaults are valid except the TOFU security advisory.
-        let hard_errors: Vec<_> = errs.iter()
-            .filter(|e| !e.contains("tofu"))
-            .collect();
-        assert!(hard_errors.is_empty(), "unexpected errors: {:?}", hard_errors);
+        let hard_errors: Vec<_> = errs.iter().filter(|e| !e.contains("tofu")).collect();
+        assert!(
+            hard_errors.is_empty(),
+            "unexpected errors: {:?}",
+            hard_errors
+        );
     }
 
     #[test]

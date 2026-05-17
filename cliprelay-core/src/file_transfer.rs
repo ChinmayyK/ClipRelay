@@ -120,14 +120,13 @@ pub struct OutboundTransfer {
 impl OutboundTransfer {
     /// Split `data` into chunks and create an outbound transfer.
     pub fn new(data: Vec<u8>, meta: FileTransferMetadata, target_device: Option<Uuid>) -> Self {
-        let mut id = [0u8; 16];
-        id.copy_from_slice(Uuid::new_v4().as_bytes());
-
         let chunks: Vec<Vec<u8>> = data.chunks(FILE_CHUNK_SIZE).map(|c| c.to_vec()).collect();
         let total_chunks = chunks.len() as u32;
 
         Self {
-            transfer_id: id,
+            // Use the announced transfer ID so later accept/ack messages map
+            // back to the sender's local outbound state.
+            transfer_id: meta.transfer_id,
             meta,
             chunks,
             total_chunks,
@@ -219,7 +218,10 @@ impl InboundTransfer {
         // sender-supplied file name to prevent a malicious peer from writing
         // outside save_dir via "../../../etc/passwd" style names.
         let safe_name = sanitize_file_name(&self.meta.file_name);
-        anyhow::ensure!(!safe_name.is_empty(), "file name is empty after sanitization");
+        anyhow::ensure!(
+            !safe_name.is_empty(),
+            "file name is empty after sanitization"
+        );
 
         let uid = hex::encode(&self.transfer_id[..4]);
         let tmp_name = format!(".cliprelay_tmp_{uid}_{safe_name}");
@@ -309,8 +311,7 @@ impl InboundTransfer {
     pub fn should_ack(&self) -> bool {
         // `is_multiple_of` was stabilised in Rust 1.75 — using % avoids a
         // silent build failure on older toolchains (HIGH-01).
-        self.last_confirmed_chunk > 0
-            && self.last_confirmed_chunk % FILE_ACK_EVERY_N_CHUNKS == 0
+        self.last_confirmed_chunk > 0 && self.last_confirmed_chunk % FILE_ACK_EVERY_N_CHUNKS == 0
     }
 }
 
@@ -564,6 +565,7 @@ mod tests {
     fn outbound_chunks_roundtrip() {
         let data = b"hello world".repeat(1000);
         let meta = make_meta(&data);
+        let announced_id = meta.transfer_id;
         let mut transfer = OutboundTransfer::new(data.clone(), meta, None);
         let mut collected: Vec<FileTransferMessage> = Vec::new();
         while let Some(msg) = transfer.next_chunk_message() {
@@ -571,6 +573,18 @@ mod tests {
         }
         assert!(!collected.is_empty());
         assert!(transfer.is_all_sent());
+        assert_eq!(transfer.transfer_id, announced_id);
+    }
+
+    #[test]
+    fn manager_preserves_announced_transfer_id() {
+        let tmp = TempDir::new().unwrap();
+        let data = b"proof".repeat(128);
+        let mut mgr = FileTransferManager::new(tmp.path().to_path_buf());
+        let transfer = mgr
+            .start_outbound(data, "proof.txt".into(), "text/plain".into(), None)
+            .unwrap();
+        assert_eq!(transfer.transfer_id, transfer.meta.transfer_id);
     }
 
     #[test]

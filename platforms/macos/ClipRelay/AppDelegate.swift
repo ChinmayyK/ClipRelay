@@ -13,10 +13,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var quickAccessController:    NSWindowController?
     private var commandPaletteController: NSWindowController?
     private var cancellables = Set<AnyCancellable>()
+    private var daemonProcess: Process?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard ensureSingleRunningInstance() else { return }
         NSApp.setActivationPolicy(.accessory)
+        NSApp.appearance = NSAppearance(named: .aqua)
+        startDaemonIfNeeded()
         setupMenuBar()
         setupWindows()
         bindStore()
@@ -24,7 +27,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerSleepWakeObservers()
         registerStoreNotifications()
         store.start()
-        openDashboard()
     }
 
     /// Observe notifications posted by ClipRelayStore so it stays decoupled from AppKit.
@@ -39,6 +41,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         store.stop()
+        daemonProcess?.terminate()
+    }
+
+    // MARK: - Daemon lifecycle
+
+    private func startDaemonIfNeeded() {
+        guard !isDaemonSocketPresent() else { return }
+
+        let candidates = [
+            Bundle.main.resourceURL?.appendingPathComponent("cliprelay-daemon"),
+            Bundle.main.executableURL?.deletingLastPathComponent().appendingPathComponent("cliprelay-daemon"),
+            URL(fileURLWithPath: "/usr/local/bin/cliprelay-daemon"),
+            URL(fileURLWithPath: "/opt/homebrew/bin/cliprelay-daemon")
+        ].compactMap { $0 }
+
+        guard let daemonURL = candidates.first(where: {
+            FileManager.default.isExecutableFile(atPath: $0.path)
+        }) else {
+            NSLog("ClipRelay: cliprelay-daemon not found in bundle or PATH candidates")
+            return
+        }
+
+        let process = Process()
+        process.executableURL = daemonURL
+        process.environment = ProcessInfo.processInfo.environment.merging([
+            "CLIPRELAY_LOG": "info"
+        ]) { current, _ in current }
+
+        do {
+            try process.run()
+            daemonProcess = process
+            NSLog("ClipRelay: started daemon at \(daemonURL.path)")
+        } catch {
+            NSLog("ClipRelay: failed to start daemon: \(error.localizedDescription)")
+        }
+    }
+
+    private func isDaemonSocketPresent() -> Bool {
+        let path: String
+        if let runtime = ProcessInfo.processInfo.environment["XDG_RUNTIME_DIR"] {
+            path = "\(runtime)/cliprelay.sock"
+        } else {
+            path = "/tmp/cliprelay-\(getuid()).sock"
+        }
+        return FileManager.default.fileExists(atPath: path)
     }
 
     // MARK: - Single instance guard
@@ -207,7 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
 
         let baseImage: NSImage
-        if let img = NSImage(named: "StatusBarTemplate") {
+        if let img = statusBarImage() {
             baseImage = img.copy() as! NSImage
         } else {
             button.title = pendingCount > 0 ? "CR●" : "CR"
@@ -363,6 +410,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.titlebarAppearsTransparent = true
         window.titleVisibility            = .hidden
         window.isMovableByWindowBackground = true
+        window.appearance                 = NSAppearance(named: .aqua)
+        window.level                      = .normal
+        window.collectionBehavior         = [.moveToActiveSpace]
+        window.isReleasedWhenClosed       = false
         window.contentViewController = NSHostingController(rootView: rootView)
         return NSWindowController(window: window)
     }
@@ -373,15 +424,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let frame = fittedFrame(for: size)
         let panel = NSPanel(
             contentRect: frame,
-            styleMask: [.borderless, .nonactivatingPanel],
+            styleMask: [.titled, .closable, .fullSizeContentView, .utilityWindow],
             backing: .buffered, defer: false
         )
-        panel.title              = title
-        panel.isFloatingPanel    = true
-        panel.level              = .floating
-        panel.isOpaque           = false
-        panel.backgroundColor    = .clear
-        panel.collectionBehavior = [.moveToActiveSpace]
+        panel.title                       = title
+        panel.titlebarAppearsTransparent  = true
+        panel.titleVisibility             = .hidden
+        panel.isMovableByWindowBackground = true
+        panel.isFloatingPanel             = false
+        panel.level                       = .normal
+        panel.hidesOnDeactivate           = true
+        panel.isReleasedWhenClosed        = false
+        panel.isOpaque                    = false
+        panel.backgroundColor             = .clear
+        panel.appearance                  = NSAppearance(named: .aqua)
+        panel.collectionBehavior          = [.moveToActiveSpace, .fullScreenAuxiliary]
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
         panel.contentViewController = NSHostingController(rootView: rootView)
         return NSWindowController(window: panel)
     }

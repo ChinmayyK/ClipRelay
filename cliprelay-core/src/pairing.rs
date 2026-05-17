@@ -287,7 +287,11 @@ mod tests {
             })
             .collect();
         // Should hit at least 5 different thousand-buckets.
-        assert!(thousands.len() >= 5, "poor PIN distribution: {:?}", thousands);
+        assert!(
+            thousands.len() >= 5,
+            "poor PIN distribution: {:?}",
+            thousands
+        );
     }
 
     #[test]
@@ -309,9 +313,7 @@ mod tests {
         let mgr2 = mgr_ref.clone();
 
         // Spawn the blocking pairing request.
-        let handle = tokio::spawn(async move {
-            mgr2.request_pairing(pairing).await
-        });
+        let handle = tokio::spawn(async move { mgr2.request_pairing(pairing).await });
 
         // Receive the UI notification.
         let req = ui_rx.recv().await.unwrap();

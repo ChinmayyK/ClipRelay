@@ -412,8 +412,10 @@ mod tests {
     #[test]
     fn global_metrics_snapshot() {
         let m = GlobalMetrics::new();
-        m.pushes_sent.fetch_add(5, std::sync::atomic::Ordering::Relaxed);
-        m.bytes_sent.fetch_add(2048, std::sync::atomic::Ordering::Relaxed);
+        m.pushes_sent
+            .fetch_add(5, std::sync::atomic::Ordering::Relaxed);
+        m.bytes_sent
+            .fetch_add(2048, std::sync::atomic::Ordering::Relaxed);
         let snap = m.snapshot();
         assert_eq!(snap.pushes_sent, 5);
         assert_eq!(snap.bytes_sent, 2048);
@@ -433,7 +435,8 @@ mod tests {
     #[test]
     fn summary_includes_key_fields() {
         let m = GlobalMetrics::new();
-        m.dedup_suppressed.fetch_add(3, std::sync::atomic::Ordering::Relaxed);
+        m.dedup_suppressed
+            .fetch_add(3, std::sync::atomic::Ordering::Relaxed);
         let s = m.summary();
         assert!(s.contains("dedup=3"));
         assert!(s.contains("uptime="));

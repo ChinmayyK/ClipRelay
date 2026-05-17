@@ -171,10 +171,7 @@ impl Reassembler {
                     total_chunks,
                     MAX_CHUNKS_ALLOWED
                 );
-                anyhow::ensure!(
-                    !checksum.is_empty(),
-                    "transfer Start has empty checksum"
-                );
+                anyhow::ensure!(!checksum.is_empty(), "transfer Start has empty checksum");
 
                 self.in_flight.insert(
                     transfer_id,

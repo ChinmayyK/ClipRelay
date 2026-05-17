@@ -3,6 +3,17 @@
 
 import SwiftUI
 
+private enum QuickAccessSurface {
+    static let chromeTop = Color(hex: 0xFFFFFF, opacity: 0.97)
+    static let chromeBottom = Color(hex: 0xEEF4FF, opacity: 0.98)
+    static let stroke = CRTheme.stroke.opacity(0.78)
+    static let divider = CRTheme.stroke.opacity(0.72)
+    static let card = Color.white.opacity(0.78)
+    static let cardStrong = Color.white.opacity(0.92)
+    static let rowHover = CRTheme.ink.opacity(0.035)
+    static let rowSelected = CRTheme.brandElectric.opacity(0.10)
+}
+
 // MARK: - Root Panel
 
 struct QuickAccessHistoryView: View {
@@ -55,12 +66,11 @@ struct QuickAccessHistoryView: View {
 
     var body: some View {
         ZStack {
-            // Background: HUD vibrancy + obsidian tint
-            CRHUDMaterial().ignoresSafeArea()
+            CRVisualEffect(material: .popover).ignoresSafeArea()
             LinearGradient(
                 stops: [
-                    .init(color: Color(hex: 0x0C1025, opacity: 0.58), location: 0),
-                    .init(color: Color(hex: 0x060810, opacity: 0.70), location: 1)
+                    .init(color: QuickAccessSurface.chromeTop, location: 0),
+                    .init(color: QuickAccessSurface.chromeBottom, location: 1)
                 ],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             ).ignoresSafeArea()
@@ -131,10 +141,9 @@ struct QuickAccessHistoryView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color(white: 1, opacity: 0.08), lineWidth: 0.5)
+                .strokeBorder(QuickAccessSurface.stroke, lineWidth: 0.5)
         }
-        .shadow(color: .black.opacity(0.55), radius: 70, x: 0, y: 28)
-        .environment(\.colorScheme, .dark)
+        .shadow(color: .black.opacity(0.14), radius: 38, x: 0, y: 18)
         .onAppear { searchFocused = true }
         .onChange(of: search) { _ in selectedIndex = 0; expandedID = nil }
         .background(
@@ -161,7 +170,7 @@ struct QuickAccessHistoryView: View {
     // MARK: Helpers
 
     private var panelSeparator: some View {
-        Rectangle().fill(Color(white: 1, opacity: 0.07)).frame(height: 0.5)
+        Rectangle().fill(QuickAccessSurface.divider).frame(height: 0.5)
     }
 
     private func navigate(_ delta: Int) {
@@ -186,34 +195,38 @@ private struct QASearchBar: View {
         HStack(spacing: 10) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(Color(white: 1, opacity: 0.28))
+                .foregroundStyle(CRTheme.inkSoft)
                 .frame(width: 18)
 
             TextField("Search clipboard history…", text: $text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15.5))
-                .foregroundStyle(.white)
+                .foregroundStyle(CRTheme.ink)
                 .focused(focused)
 
             if !text.isEmpty {
                 Button { withAnimation(.crFast) { text = "" } } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 15))
-                        .foregroundStyle(Color(white: 1, opacity: 0.28))
+                        .foregroundStyle(CRTheme.inkSoft)
                 }
                 .buttonStyle(.plain)
                 .transition(.scale(scale: 0.75).combined(with: .opacity))
             } else {
-                HStack(spacing: 2) { KbdChip("⌘"); KbdChip("⇧"); KbdChip("V") }
+                HStack(spacing: 2) {
+                    KbdChip("⌘", dark: false)
+                    KbdChip("⇧", dark: false)
+                    KbdChip("V", dark: false)
+                }
             }
         }
         .padding(.horizontal, 13).padding(.vertical, 10)
         .background {
             RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(Color(white: 1, opacity: 0.08))
+                .fill(QuickAccessSurface.cardStrong)
                 .overlay {
                     RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .strokeBorder(Color(white: 1, opacity: 0.10), lineWidth: 0.5)
+                        .strokeBorder(QuickAccessSurface.stroke, lineWidth: 0.5)
                 }
         }
         .animation(.crFast, value: text.isEmpty)
@@ -256,12 +269,12 @@ private struct QuickSendStrip: View {
                     .foregroundStyle(CRTheme.brandElectric)
                 Spacer()
                 Text(context.timestamp.relativeTimeString())
-                    .font(.system(size: 10.5)).foregroundStyle(Color(white: 1, opacity: 0.24))
+                    .font(.system(size: 10.5)).foregroundStyle(CRTheme.inkSubtle)
             }
 
             Text(context.text)
                 .font(.system(size: 12.5, weight: .medium, design: .monospaced))
-                .foregroundStyle(Color(white: 1, opacity: 0.80))
+                .foregroundStyle(CRTheme.ink.opacity(0.88))
                 .lineLimit(2).fixedSize(horizontal: false, vertical: true)
 
             quickSendTargets
@@ -290,12 +303,12 @@ private struct QuickSendStrip: View {
                                 Image(systemName: "desktopcomputer").font(.system(size: 9.5))
                                 Text(device.name).font(.system(size: 11, weight: .medium))
                             }
-                            .foregroundStyle(.white.opacity(0.82))
+                            .foregroundStyle(CRTheme.ink.opacity(0.90))
                             .padding(.horizontal, 9).padding(.vertical, 5)
                             .background {
                                 Capsule()
-                                    .fill(Color(white: 1, opacity: 0.09))
-                                    .overlay { Capsule().strokeBorder(Color(white: 1, opacity: 0.11), lineWidth: 0.5) }
+                                    .fill(QuickAccessSurface.cardStrong)
+                                    .overlay { Capsule().strokeBorder(QuickAccessSurface.stroke, lineWidth: 0.5) }
                             }
                         }
                         .buttonStyle(.plain)
@@ -343,16 +356,16 @@ private struct QuickRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title)
                         .font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(isSelected ? 1.0 : 0.82))
+                        .foregroundStyle(CRTheme.ink.opacity(isSelected ? 1.0 : 0.90))
                         .lineLimit(1)
                     HStack(spacing: 4) {
                         Text(item.typeLabel).foregroundStyle(accent.opacity(0.70))
-                        Text("·").foregroundStyle(Color(white: 1, opacity: 0.18)).font(.system(size: 9))
+                        Text("·").foregroundStyle(CRTheme.inkFaint).font(.system(size: 9))
                         Text(item.sourceDevice).lineLimit(1).truncationMode(.middle)
-                        Text("·").foregroundStyle(Color(white: 1, opacity: 0.18)).font(.system(size: 9))
+                        Text("·").foregroundStyle(CRTheme.inkFaint).font(.system(size: 9))
                         Text(item.timestamp.relativeTimeString())
                     }
-                    .font(.system(size: 10.5)).foregroundStyle(Color(white: 1, opacity: 0.36))
+                    .font(.system(size: 10.5)).foregroundStyle(CRTheme.inkSoft)
                 }
 
                 Spacer(minLength: 0)
@@ -367,11 +380,11 @@ private struct QuickRow: View {
                             } label: {
                                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                                     .font(.system(size: 10, weight: .medium))
-                                    .foregroundStyle(Color(white: 1, opacity: 0.40))
+                                    .foregroundStyle(CRTheme.inkSubtle)
                             }
                             .buttonStyle(.plain)
                         }
-                        KbdChip("↵")
+                        KbdChip("↵", dark: false)
                     }
                     .transition(.opacity.combined(with: .scale(scale: 0.85)))
                 }
@@ -389,7 +402,7 @@ private struct QuickRow: View {
             if isExpanded, let preview = item.fullText, !preview.isEmpty {
                 Text(preview)
                     .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(Color(white: 1, opacity: 0.65))
+                    .foregroundStyle(CRTheme.ink.opacity(0.82))
                     .padding(.horizontal, 10).padding(.bottom, 9)
                     .fixedSize(horizontal: false, vertical: true)
                     .lineLimit(8)
@@ -399,9 +412,13 @@ private struct QuickRow: View {
         }
         .background {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(isSelected
-                      ? Color(white: 1, opacity: 0.095)
-                      : (hovered ? Color(white: 1, opacity: 0.042) : .clear))
+                .fill(isSelected ? QuickAccessSurface.rowSelected : (hovered ? QuickAccessSurface.rowHover : .clear))
+                .overlay {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(CRTheme.brandElectric.opacity(0.18), lineWidth: 0.5)
+                    }
+                }
         }
         .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .onTapGesture { onTap() }
@@ -419,14 +436,14 @@ private struct QAEmptyState: View {
         VStack(spacing: 11) {
             Image(systemName: hasSearch ? "magnifyingglass" : "doc.on.clipboard")
                 .font(.system(size: 26, weight: .ultraLight))
-                .foregroundStyle(Color(white: 1, opacity: 0.16))
+                .foregroundStyle(CRTheme.inkSubtle)
                 .symbolRenderingMode(.hierarchical)
             Text(hasSearch ? "No results" : "Clipboard is empty")
                 .font(.system(size: 13.5, weight: .medium))
-                .foregroundStyle(Color(white: 1, opacity: 0.32))
+                .foregroundStyle(CRTheme.inkSoft)
             if !hasSearch {
                 Text("Copy something to get started")
-                    .font(.system(size: 12)).foregroundStyle(Color(white: 1, opacity: 0.18))
+                    .font(.system(size: 12)).foregroundStyle(CRTheme.inkSubtle)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity).padding(.vertical, 44)
@@ -448,9 +465,9 @@ private struct QAFooter: View {
         .padding(.horizontal, 16).padding(.vertical, 10)
         .background {
             Rectangle()
-                .fill(Color(white: 1, opacity: 0.022))
+                .fill(Color.white.opacity(0.32))
                 .overlay(alignment: .top) {
-                    Rectangle().fill(Color(white: 1, opacity: 0.07)).frame(height: 0.5)
+                    Rectangle().fill(QuickAccessSurface.divider).frame(height: 0.5)
                 }
         }
     }
@@ -460,8 +477,8 @@ private struct QAHint: View {
     let keys: [String]; let label: String
     var body: some View {
         HStack(spacing: 3) {
-            ForEach(keys, id: \.self) { KbdChip($0) }
-            Text(label).font(.system(size: 10.5)).foregroundStyle(Color(white: 1, opacity: 0.20))
+            ForEach(keys, id: \.self) { KbdChip($0, dark: false) }
+            Text(label).font(.system(size: 10.5)).foregroundStyle(CRTheme.inkSubtle)
         }
     }
 }

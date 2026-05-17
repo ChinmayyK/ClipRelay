@@ -46,10 +46,18 @@ async fn run() -> Result<()> {
         ["devices", "rename", id, name] => cmd_devices_rename(id, name).await,
         // Peer settings
         ["devices", "peer-settings", id] => cmd_peer_settings_get(id).await,
-        ["devices", "peer-settings", id, "pause"] => cmd_peer_settings_patch(id, r#"{"sync_paused":true}"#).await,
-        ["devices", "peer-settings", id, "resume"] => cmd_peer_settings_patch(id, r#"{"sync_paused":false}"#).await,
-        ["devices", "peer-settings", id, "auto-apply", "on"] => cmd_peer_settings_patch(id, r#"{"auto_apply":true}"#).await,
-        ["devices", "peer-settings", id, "auto-apply", "off"] => cmd_peer_settings_patch(id, r#"{"auto_apply":false}"#).await,
+        ["devices", "peer-settings", id, "pause"] => {
+            cmd_peer_settings_patch(id, r#"{"sync_paused":true}"#).await
+        }
+        ["devices", "peer-settings", id, "resume"] => {
+            cmd_peer_settings_patch(id, r#"{"sync_paused":false}"#).await
+        }
+        ["devices", "peer-settings", id, "auto-apply", "on"] => {
+            cmd_peer_settings_patch(id, r#"{"auto_apply":true}"#).await
+        }
+        ["devices", "peer-settings", id, "auto-apply", "off"] => {
+            cmd_peer_settings_patch(id, r#"{"auto_apply":false}"#).await
+        }
 
         // History — basic
         ["history"] => cmd_history(20, None).await,
@@ -73,15 +81,41 @@ async fn run() -> Result<()> {
         ["history", "tag", id, tag] => cmd_history_tag(id, tag, true).await,
         ["history", "untag", id, tag] => cmd_history_tag(id, tag, false).await,
         // History — filtered list (type, device, pinned, date)
-        ["history", "--type", kind] => cmd_history_filtered(kind, None, None, None, None, 50, false).await,
-        ["history", "--device", device] => cmd_history_filtered("", Some(*device), None, None, None, 50, false).await,
-        ["history", "--tag", tag] => cmd_history_filtered("", None, None, None, Some(*tag), 50, false).await,
-        ["history", "--pinned"] => cmd_history_filtered("", None, None, None, None, 100, true).await,
+        ["history", "--type", kind] => {
+            cmd_history_filtered(kind, None, None, None, None, 50, false).await
+        }
+        ["history", "--device", device] => {
+            cmd_history_filtered("", Some(*device), None, None, None, 50, false).await
+        }
+        ["history", "--tag", tag] => {
+            cmd_history_filtered("", None, None, None, Some(*tag), 50, false).await
+        }
+        ["history", "--pinned"] => {
+            cmd_history_filtered("", None, None, None, None, 100, true).await
+        }
         ["history", "--type", kind, "--last", n] => {
-            cmd_history_filtered(kind, None, None, None, None, n.parse().context("bad N")?, false).await
+            cmd_history_filtered(
+                kind,
+                None,
+                None,
+                None,
+                None,
+                n.parse().context("bad N")?,
+                false,
+            )
+            .await
         }
         ["history", "--device", device, "--last", n] => {
-            cmd_history_filtered("", Some(*device), None, None, None, n.parse().context("bad N")?, false).await
+            cmd_history_filtered(
+                "",
+                Some(*device),
+                None,
+                None,
+                None,
+                n.parse().context("bad N")?,
+                false,
+            )
+            .await
         }
 
         // Templates
@@ -585,8 +619,7 @@ async fn cmd_history_delete(id_str: &str) -> Result<()> {
 
 async fn cmd_history_export_csv() -> Result<()> {
     // Try live daemon first.
-    if let Some(IpcResponse::Ok { data: Some(data) }) =
-        try_ipc(&IpcRequest::HistoryExportCsv).await
+    if let Some(IpcResponse::Ok { data: Some(data) }) = try_ipc(&IpcRequest::HistoryExportCsv).await
     {
         if let Some(csv) = data.as_str() {
             print!("{}", csv);
@@ -620,12 +653,30 @@ async fn cmd_history_stats() -> Result<()> {
         IpcResponse::Ok { data: Some(data) } => {
             println!("Clipboard History — Statistics\n{}", "═".repeat(38));
             println!("  Total entries:   {}", data["total"].as_u64().unwrap_or(0));
-            println!("  Text:            {}", data["text_count"].as_u64().unwrap_or(0));
-            println!("  Images:          {}", data["image_count"].as_u64().unwrap_or(0));
-            println!("  Files:           {}", data["file_count"].as_u64().unwrap_or(0));
-            println!("  Pinned:          {}", data["pinned_count"].as_u64().unwrap_or(0));
-            println!("  Tagged:          {}", data["tagged_count"].as_u64().unwrap_or(0));
-            println!("  Devices seen:    {}", data["distinct_devices"].as_u64().unwrap_or(0));
+            println!(
+                "  Text:            {}",
+                data["text_count"].as_u64().unwrap_or(0)
+            );
+            println!(
+                "  Images:          {}",
+                data["image_count"].as_u64().unwrap_or(0)
+            );
+            println!(
+                "  Files:           {}",
+                data["file_count"].as_u64().unwrap_or(0)
+            );
+            println!(
+                "  Pinned:          {}",
+                data["pinned_count"].as_u64().unwrap_or(0)
+            );
+            println!(
+                "  Tagged:          {}",
+                data["tagged_count"].as_u64().unwrap_or(0)
+            );
+            println!(
+                "  Devices seen:    {}",
+                data["distinct_devices"].as_u64().unwrap_or(0)
+            );
             let text_kb = data["total_text_bytes"].as_u64().unwrap_or(0) / 1024;
             let img_kb = data["total_image_bytes"].as_u64().unwrap_or(0) / 1024;
             let file_kb = data["total_file_bytes"].as_u64().unwrap_or(0) / 1024;
@@ -644,7 +695,10 @@ async fn cmd_history_stats() -> Result<()> {
             // Offline fallback.
             let history = History::load(default_history_path())?;
             let stats = history.stats();
-            println!("Clipboard History — Statistics (offline)\n{}", "═".repeat(40));
+            println!(
+                "Clipboard History — Statistics (offline)\n{}",
+                "═".repeat(40)
+            );
             println!("  Total entries:   {}", stats.total);
             println!("  Text:            {}", stats.text_count);
             println!("  Images:          {}", stats.image_count);
@@ -659,9 +713,15 @@ async fn cmd_history_stats() -> Result<()> {
 async fn cmd_history_tag(id_str: &str, tag: &str, add: bool) -> Result<()> {
     let id: u64 = id_str.parse().context("bad history ID")?;
     let req = if add {
-        IpcRequest::HistoryTag { id, tag: tag.to_string() }
+        IpcRequest::HistoryTag {
+            id,
+            tag: tag.to_string(),
+        }
     } else {
-        IpcRequest::HistoryUntag { id, tag: tag.to_string() }
+        IpcRequest::HistoryUntag {
+            id,
+            tag: tag.to_string(),
+        }
     };
     match ipc(&req).await? {
         IpcResponse::Ok { .. } => {
@@ -687,7 +747,11 @@ async fn cmd_history_filtered(
     pinned_only: bool,
 ) -> Result<()> {
     let req = IpcRequest::HistoryFilteredList {
-        kind: if kind.is_empty() { None } else { Some(kind.to_string()) },
+        kind: if kind.is_empty() {
+            None
+        } else {
+            Some(kind.to_string())
+        },
         device: device.map(str::to_string),
         from_secs,
         to_secs,
@@ -702,15 +766,31 @@ async fn cmd_history_filtered(
                 println!("No history entries match the filter.");
                 return Ok(());
             }
-            println!("{:<6}  {:<17}  {:<16}  {:<8}  {}", "ID", "Time", "Device", "Kind", "Summary");
+            println!(
+                "{:<6}  {:<17}  {:<16}  {:<8}  {}",
+                "ID", "Time", "Device", "Kind", "Summary"
+            );
             println!("{}", "─".repeat(90));
             for e in &entries {
                 let tags_str = e["tags"]
                     .as_array()
-                    .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(","))
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    })
                     .unwrap_or_default();
-                let tag_disp = if tags_str.is_empty() { String::new() } else { format!(" [{}]", tags_str) };
-                let pin = if e["pinned"].as_bool().unwrap_or(false) { "📌 " } else { "" };
+                let tag_disp = if tags_str.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", tags_str)
+                };
+                let pin = if e["pinned"].as_bool().unwrap_or(false) {
+                    "📌 "
+                } else {
+                    ""
+                };
                 println!(
                     "{:<6}  {:<17}  {:<16}  {:<8}  {}{}{}",
                     e["id"].as_u64().unwrap_or(0),
@@ -744,7 +824,11 @@ async fn cmd_template_list() -> Result<()> {
                 let name = t["name"].as_str().unwrap_or("?");
                 let desc = t["description"].as_str().unwrap_or("");
                 let text = t["text"].as_str().unwrap_or("");
-                let text_preview = if text.len() > 40 { format!("{}…", &text[..40]) } else { text.to_string() };
+                let text_preview = if text.len() > 40 {
+                    format!("{}…", &text[..40])
+                } else {
+                    text.to_string()
+                };
                 println!("{:<20}  {:<30}  {}", name, desc, text_preview);
             }
         }
@@ -780,7 +864,11 @@ async fn cmd_template_set(name: &str, text: &str, description: &str) -> Result<(
 }
 
 async fn cmd_template_remove(name: &str) -> Result<()> {
-    match ipc(&IpcRequest::TemplateRemove { name: name.to_string() }).await? {
+    match ipc(&IpcRequest::TemplateRemove {
+        name: name.to_string(),
+    })
+    .await?
+    {
         IpcResponse::Ok { data } => {
             let removed = data
                 .as_ref()
@@ -799,12 +887,28 @@ async fn cmd_template_remove(name: &str) -> Result<()> {
 }
 
 async fn cmd_peer_settings_get(device_id: &str) -> Result<()> {
-    match ipc(&IpcRequest::GetPeerSettings { device_id: device_id.to_string() }).await? {
+    match ipc(&IpcRequest::GetPeerSettings {
+        device_id: device_id.to_string(),
+    })
+    .await?
+    {
         IpcResponse::Ok { data: Some(data) } => {
             println!("Per-peer settings for {}:", device_id);
-            println!("  display_name: {}", data["display_name"].as_str().unwrap_or("(not set)"));
-            println!("  auto_apply:   {}", data["auto_apply"].as_bool().map(bool_icon).unwrap_or("(inherit global)"));
-            println!("  sync_paused:  {}", bool_icon(data["sync_paused"].as_bool().unwrap_or(false)));
+            println!(
+                "  display_name: {}",
+                data["display_name"].as_str().unwrap_or("(not set)")
+            );
+            println!(
+                "  auto_apply:   {}",
+                data["auto_apply"]
+                    .as_bool()
+                    .map(bool_icon)
+                    .unwrap_or("(inherit global)")
+            );
+            println!(
+                "  sync_paused:  {}",
+                bool_icon(data["sync_paused"].as_bool().unwrap_or(false))
+            );
             if let Some(max) = data["max_payload_bytes"].as_u64() {
                 println!("  max_payload:  {} MB", max / 1024 / 1024);
             } else {
@@ -837,7 +941,11 @@ fn trunc_summary(entry: &serde_json::Value) -> String {
         "Text" => {
             let preview = entry["payload"]["preview"].as_str().unwrap_or("");
             let first = preview.lines().next().unwrap_or("").trim();
-            if first.len() > 50 { format!("{}…", &first[..50]) } else { first.to_string() }
+            if first.len() > 50 {
+                format!("{}…", &first[..50])
+            } else {
+                first.to_string()
+            }
         }
         "Image" => {
             let mime = entry["payload"]["mime"].as_str().unwrap_or("image");
@@ -849,7 +957,10 @@ fn trunc_summary(entry: &serde_json::Value) -> String {
             let kb = entry["payload"]["bytes"].as_u64().unwrap_or(0) / 1024;
             format!("[File '{}' {} KB]", name, kb)
         }
-        _ => entry["payload"]["summary"].as_str().unwrap_or("?").to_string(),
+        _ => entry["payload"]["summary"]
+            .as_str()
+            .unwrap_or("?")
+            .to_string(),
     }
 }
 
@@ -1107,4 +1218,3 @@ EXAMPLES
         env!("CARGO_PKG_VERSION")
     );
 }
-

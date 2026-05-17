@@ -1,5 +1,6 @@
 // DesignSystem.swift — ClipRelay macOS v4
 // Canonical design tokens, components, and view modifiers.
+// Updated: full adaptive light/dark sidebar + refined component polish.
 
 import SwiftUI
 import AppKit
@@ -18,8 +19,7 @@ extension Color {
             red:   Double((hex >> 16) & 0xFF) / 255,
             green: Double((hex >> 8)  & 0xFF) / 255,
             blue:  Double(hex         & 0xFF) / 255,
-            opacity: opacity
-        )
+            opacity: opacity)
     }
 }
 
@@ -32,10 +32,52 @@ enum CRTheme {
     static let brandViolet   = Color(hex: 0x9B6BF5)
     static let brandCyan     = Color(hex: 0x34C8E8)
 
-    // ── Sidebar ───────────────────────────────────────────────────────────────
-    static let sidebarBase = Color(hex: 0x080B14)
-    static let sidebarMid  = Color(hex: 0x0C1121)
-    static let sidebarTop  = Color(hex: 0x11162C)
+    // ── Sidebar — fully adaptive ───────────────────────────────────────────────
+    static var sidebarBase: Color {
+        Color(light: Color(hex: 0xF2F4F8), dark: Color(hex: 0x080B14))
+    }
+    static var sidebarMid: Color {
+        Color(light: Color(hex: 0xE8EBF2), dark: Color(hex: 0x0C1121))
+    }
+    static var sidebarTop: Color {
+        Color(light: Color(hex: 0xEDF0F8), dark: Color(hex: 0x11162C))
+    }
+
+    /// Primary foreground for text/icons drawn on the sidebar surface
+    static var sidebarInk: Color {
+        Color(light: Color(hex: 0x1C1E26), dark: .white)
+    }
+    /// Secondary / de-emphasised sidebar text
+    static var sidebarInkSoft: Color {
+        Color(light: Color(hex: 0x6B7280), dark: Color(white: 1, opacity: 0.46))
+    }
+    /// Very muted sidebar text (timestamps, hints)
+    static var sidebarInkSubtle: Color {
+        Color(light: Color(hex: 0x9CA3AF), dark: Color(white: 1, opacity: 0.28))
+    }
+    /// Subtle separator for use inside the sidebar
+    static var sidebarDivider: Color {
+        Color(light: Color(hex: 0xD1D5E0).opacity(0.9), dark: Color(white: 1, opacity: 0.07))
+    }
+    /// Selected nav-button pill fill
+    static var sidebarSelectedFill: Color {
+        Color(light: Color(hex: 0xFFFFFF).opacity(0.80), dark: Color(white: 1, opacity: 0.11))
+    }
+    /// Hovered nav-button pill fill
+    static var sidebarHoverFill: Color {
+        Color(light: Color(hex: 0x000000).opacity(0.04), dark: Color(white: 1, opacity: 0.045))
+    }
+    /// Selected nav-button border
+    static var sidebarSelectedStroke: Color {
+        Color(light: Color(hex: 0xD1D5E0).opacity(0.7), dark: Color(white: 1, opacity: 0.07))
+    }
+    /// Stat-pill fill inside footer
+    static var sidebarPillFill: Color {
+        Color(light: Color(hex: 0x000000).opacity(0.05), dark: Color(white: 1, opacity: 0.05))
+    }
+    static var sidebarPillStroke: Color {
+        Color(light: Color(hex: 0x000000).opacity(0.07), dark: Color(white: 1, opacity: 0.07))
+    }
 
     // ── Canvas ────────────────────────────────────────────────────────────────
     static var canvasTop:    Color { Color(light: Color(hex: 0xEFF1F8), dark: Color(hex: 0x13161F)) }
@@ -82,12 +124,13 @@ enum CRTheme {
         LinearGradient(colors: [canvasTop, canvasBottom],
                        startPoint: .topLeading, endPoint: .bottomTrailing)
     }
+    /// Adaptive sidebar overlay — subtle in light mode, deep in dark mode
     static var sidebarOverlay: LinearGradient {
         LinearGradient(
             stops: [
-                .init(color: Color(hex: 0x11162C, opacity: 0.82), location: 0.0),
-                .init(color: Color(hex: 0x0C1121, opacity: 0.87), location: 0.5),
-                .init(color: Color(hex: 0x080B14, opacity: 0.92), location: 1.0)
+                .init(color: sidebarTop.opacity(0.82),  location: 0.0),
+                .init(color: sidebarMid.opacity(0.87),  location: 0.5),
+                .init(color: sidebarBase.opacity(0.92), location: 1.0)
             ],
             startPoint: .topLeading, endPoint: .bottomTrailing
         )
@@ -106,12 +149,11 @@ typealias PBTheme = CRTheme
 
 // MARK: - Density Mode
 
-/// Controls whether list rows are compact (tight) or comfortable (spacious).
 enum CRDensityMode {
     case compact, comfortable
-    var rowPadding: CGFloat    { self == .compact ? 8  : 12 }
-    var cardSpacing: CGFloat   { self == .compact ? 4  : 7  }
-    var cardRadius: CGFloat    { self == .compact ? 9  : 11 }
+    var rowPadding:  CGFloat { self == .compact ? 8  : 12 }
+    var cardSpacing: CGFloat { self == .compact ? 4  : 7  }
+    var cardRadius:  CGFloat { self == .compact ? 9  : 11 }
 }
 
 // MARK: - Animation
@@ -137,7 +179,7 @@ struct CRSidebarMaterial: NSViewRepresentable {
 struct CRHUDMaterial: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
         let v = NSVisualEffectView()
-        v.material = .hudWindow; v.blendingMode = .behindWindow; v.state = .active
+        v.material = .popover; v.blendingMode = .behindWindow; v.state = .active
         return v
     }
     func updateNSView(_ v: NSVisualEffectView, context: Context) {}
@@ -360,15 +402,19 @@ struct CRTag: View {
     }
 }
 
+/// Adaptive sidebar badge — uses sidebar semantic tokens so it reads in both modes
 struct CRNumericBadge: View {
     let count: Int
     var body: some View {
         if count > 0 {
             Text("\(min(count, 99))")
                 .font(.system(size: 10, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.50))
+                .foregroundStyle(CRTheme.sidebarInkSoft)
                 .padding(.horizontal, 5.5).padding(.vertical, 2)
-                .background { Capsule().fill(Color(white: 1, opacity: 0.10)) }
+                .background {
+                    Capsule().fill(CRTheme.sidebarPillFill)
+                        .overlay { Capsule().strokeBorder(CRTheme.sidebarPillStroke, lineWidth: 0.5) }
+                }
         }
     }
 }
@@ -380,19 +426,20 @@ typealias PBBadge = CRTag
 
 struct CRShortcutHint: View {
     let shortcut: String
+    /// Pass `false` in the adaptive sidebar so it uses sidebar semantic colours.
     var dark: Bool = true
     var body: some View {
         Text(shortcut)
             .font(.system(size: 10, weight: .medium, design: .rounded))
-            .foregroundStyle(dark ? Color(white: 1, opacity: 0.24) : CRTheme.inkSubtle)
+            .foregroundStyle(dark ? Color(white: 1, opacity: 0.24) : CRTheme.sidebarInkSubtle)
             .padding(.horizontal, 5).padding(.vertical, 2)
             .background {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(dark ? Color(white: 1, opacity: 0.06) : CRTheme.surface)
+                    .fill(dark ? Color(white: 1, opacity: 0.06) : CRTheme.sidebarPillFill)
                     .overlay {
                         RoundedRectangle(cornerRadius: 4, style: .continuous)
                             .strokeBorder(
-                                dark ? Color(white: 1, opacity: 0.08) : CRTheme.stroke.opacity(0.45),
+                                dark ? Color(white: 1, opacity: 0.08) : CRTheme.sidebarPillStroke,
                                 lineWidth: 0.5)
                     }
             }
@@ -453,7 +500,7 @@ struct CRAppIconMark: View {
             RoundedRectangle(cornerRadius: size * 0.30, style: .continuous)
                 .fill(CRTheme.brandGradient)
                 .frame(width: size, height: size)
-                .shadow(color: CRTheme.brandElectric.opacity(0.52), radius: size * 0.35, y: size * 0.12)
+                .shadow(color: CRTheme.brandElectric.opacity(0.42), radius: size * 0.35, y: size * 0.12)
             Image(systemName: "arrow.left.arrow.right.circle.fill")
                 .font(.system(size: size * 0.44, weight: .semibold))
                 .foregroundStyle(.white.opacity(0.96))
@@ -576,19 +623,18 @@ struct SidebarNavButton: View {
             HStack(spacing: 8) {
                 Image(systemName: isSelected ? (icon + ".fill") : icon)
                     .font(.system(size: 13.5, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? CRTheme.brandElectric : .white.opacity(0.46))
+                    .foregroundStyle(isSelected ? CRTheme.brandElectric : CRTheme.sidebarInkSoft)
                     .symbolRenderingMode(.hierarchical)
                     .frame(width: 18, alignment: .center)
 
                 Text(label)
                     .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? .white.opacity(0.95) : .white.opacity(0.56))
+                    .foregroundStyle(isSelected ? CRTheme.sidebarInk : CRTheme.sidebarInkSoft)
 
                 Spacer(minLength: 0)
 
-                // Show shortcut hint on hover, badge when not hovered
                 if hovered && !shortcut.isEmpty {
-                    CRShortcutHint(shortcut: shortcut)
+                    CRShortcutHint(shortcut: shortcut, dark: false)
                         .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 } else {
                     CRNumericBadge(count: badge)
@@ -598,14 +644,16 @@ struct SidebarNavButton: View {
             .frame(maxWidth: .infinity, minHeight: 30)
             .background {
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(isSelected ? Color(white: 1, opacity: 0.11)
-                                     : (hovered ? Color(white: 1, opacity: 0.045) : .clear))
+                    .fill(isSelected ? CRTheme.sidebarSelectedFill
+                                     : (hovered ? CRTheme.sidebarHoverFill : .clear))
                     .overlay {
                         if isSelected {
                             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                .strokeBorder(Color(white: 1, opacity: 0.07), lineWidth: 0.5)
+                                .strokeBorder(CRTheme.sidebarSelectedStroke, lineWidth: 0.5)
                         }
                     }
+                    .shadow(color: .black.opacity(isSelected ? 0.05 : 0),
+                            radius: isSelected ? 3 : 0, x: 0, y: isSelected ? 1 : 0)
             }
         }
         .buttonStyle(.plain)
@@ -622,18 +670,18 @@ struct SidebarStatPill: View {
     var body: some View {
         HStack(spacing: 5) {
             Image(systemName: icon).font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(Color(white: 1, opacity: 0.28))
+                .foregroundStyle(CRTheme.sidebarInkSubtle)
             Text(value).font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(Color(white: 1, opacity: 0.80))
-            Text(label).font(.system(size: 10)).foregroundStyle(Color(white: 1, opacity: 0.28))
+                .foregroundStyle(CRTheme.sidebarInk.opacity(0.80))
+            Text(label).font(.system(size: 10)).foregroundStyle(CRTheme.sidebarInkSubtle)
         }
         .padding(.horizontal, 9).padding(.vertical, 5)
         .background {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color(white: 1, opacity: 0.05))
+                .fill(CRTheme.sidebarPillFill)
                 .overlay {
                     RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        .strokeBorder(Color(white: 1, opacity: 0.07), lineWidth: 0.5)
+                        .strokeBorder(CRTheme.sidebarPillStroke, lineWidth: 0.5)
                 }
         }
     }
@@ -653,10 +701,11 @@ struct CRDivider: View {
     }
 }
 
+/// Adaptive divider for use inside the sidebar
 struct CRDividerDark: View {
     var inset: CGFloat = 0
     var body: some View {
-        Rectangle().fill(Color(white: 1, opacity: 0.07)).frame(height: 0.5).padding(.leading, inset)
+        Rectangle().fill(CRTheme.sidebarDivider).frame(height: 0.5).padding(.leading, inset)
     }
 }
 

@@ -408,6 +408,7 @@ class PairingActivity : AppCompatActivity() {
             }
             setPadding(dp(20), dp(16), dp(20), dp(16))
             setOnClickListener { onClick() }
+            installPressFeedback()
         }
 
     private fun surfaceCard(): LinearLayout = LinearLayout(this).apply {
@@ -429,6 +430,25 @@ class PairingActivity : AppCompatActivity() {
         layoutParams = LinearLayout.LayoutParams(dp(size), 1) }
     private fun dp(v: Int) = (v * resources.displayMetrics.density).roundToInt()
     private fun cr(id: Int) = ContextCompat.getColor(this, id)
+
+    private fun View.installPressFeedback() {
+        stateListAnimator = null
+        isHapticFeedbackEnabled = true
+        setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.animate().cancel()
+                    v.animate().scaleX(0.97f).scaleY(0.97f).alpha(0.9f).setDuration(70).start()
+                    v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.animate().cancel()
+                    v.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(120).start()
+                }
+            }
+            false
+        }
+    }
 }
 
 // ─── SettingsActivity ─────────────────────────────────────────────────────────
@@ -570,7 +590,7 @@ class SettingsActivity : AppCompatActivity() {
         addView(rowDivider())
         addView(toggleRow("Sync images",    null,                             "sync_images",   true,  onChanged = { notifyServiceSettingsChanged() }))
         addView(rowDivider())
-        addView(toggleRow("Sync files",     "Saved to Downloads/ClipRelay",  "sync_files",    true,  onChanged = { notifyServiceSettingsChanged() }))
+        addView(toggleRow("Sync files",     "Saved to the app's Downloads/ClipRelay folder",  "sync_files",    true,  onChanged = { notifyServiceSettingsChanged() }))
     }
 
     /** Sends a broadcast so the running service re-reads SharedPreferences without restarting. */

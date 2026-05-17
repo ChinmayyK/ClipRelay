@@ -3,6 +3,17 @@
 
 import SwiftUI
 
+private enum PaletteSurface {
+    static let chromeTop = Color(hex: 0xFFFFFF, opacity: 0.97)
+    static let chromeBottom = Color(hex: 0xEEF3FF, opacity: 0.98)
+    static let stroke = CRTheme.stroke.opacity(0.78)
+    static let divider = CRTheme.stroke.opacity(0.72)
+    static let card = Color.white.opacity(0.74)
+    static let cardStrong = Color.white.opacity(0.90)
+    static let rowHover = CRTheme.ink.opacity(0.035)
+    static let rowSelected = CRTheme.brandElectric.opacity(0.10)
+}
+
 // MARK: - Root
 
 struct CommandPaletteView: View {
@@ -23,12 +34,12 @@ struct CommandPaletteView: View {
                     tint: CRTheme.brandElectric, shortcut: "⌘1")
                 { store.selectedSection = .timeline },
 
-                cmd(id: "nav.devices", icon: "rectangle.connected.to.line.below",
+                cmd(id: "nav.devices", icon: "desktopcomputer",
                     label: "Devices", hint: "Manage connected peers",
                     tint: CRTheme.accentGreen, shortcut: "⌘2")
                 { store.selectedSection = .devices },
 
-                cmd(id: "nav.trust", icon: "shield.checkered",
+                cmd(id: "nav.trust", icon: "checkmark.shield",
                     label: "Trust", hint: "Review device trust requests",
                     tint: CRTheme.accentOrange, shortcut: "⌘3")
                 { store.selectedSection = .trust },
@@ -124,11 +135,11 @@ struct CommandPaletteView: View {
 
     var body: some View {
         ZStack {
-            CRHUDMaterial().ignoresSafeArea()
+            CRVisualEffect(material: .popover).ignoresSafeArea()
             LinearGradient(
                 stops: [
-                    .init(color: Color(red: 0.06, green: 0.08, blue: 0.16, opacity: 0.60), location: 0),
-                    .init(color: Color(red: 0.03, green: 0.04, blue: 0.10, opacity: 0.74), location: 1)
+                    .init(color: PaletteSurface.chromeTop, location: 0),
+                    .init(color: PaletteSurface.chromeBottom, location: 1)
                 ],
                 startPoint: .topLeading, endPoint: .bottomTrailing
             ).ignoresSafeArea()
@@ -136,7 +147,7 @@ struct CommandPaletteView: View {
             VStack(spacing: 0) {
                 PaletteInputBar(query: $query, focused: $inputFocused, onSubmit: runSelected)
 
-                Rectangle().fill(Color(white: 1, opacity: 0.07)).frame(height: 0.5)
+                Rectangle().fill(PaletteSurface.divider).frame(height: 0.5)
 
                 if flat.isEmpty {
                     PaletteEmptyState()
@@ -156,7 +167,7 @@ struct CommandPaletteView: View {
                     }
                 }
 
-                Rectangle().fill(Color(white: 1, opacity: 0.07)).frame(height: 0.5)
+                Rectangle().fill(PaletteSurface.divider).frame(height: 0.5)
                 PaletteFooter()
             }
         }
@@ -165,10 +176,9 @@ struct CommandPaletteView: View {
         .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color(white: 1, opacity: 0.08), lineWidth: 0.5)
+                .strokeBorder(PaletteSurface.stroke, lineWidth: 0.5)
         }
-        .shadow(color: .black.opacity(0.56), radius: 70, x: 0, y: 28)
-        .environment(\.colorScheme, .dark)
+        .shadow(color: .black.opacity(0.14), radius: 38, x: 0, y: 18)
         .onAppear { inputFocused = true; selectedIndex = 0 }
         .onChange(of: query) { _ in selectedIndex = 0 }
         .background(
@@ -249,21 +259,30 @@ private struct PaletteInputBar: View {
             TextField("Type a command…", text: $query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 15.5))
-                .foregroundStyle(.white)
+                .foregroundStyle(CRTheme.ink)
                 .focused(focused)
                 .onSubmit { onSubmit() }
 
             if !query.isEmpty {
                 Button { withAnimation(.crFast) { query = "" } } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 14.5)).foregroundStyle(Color(white: 1, opacity: 0.28))
+                        .font(.system(size: 14.5)).foregroundStyle(CRTheme.inkSoft)
                 }
                 .buttonStyle(.plain).transition(.scale(scale: 0.75).combined(with: .opacity))
             } else {
-                KbdChip("⌘K")
+                KbdChip("⌘K", dark: false)
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 14)
+        .background {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(PaletteSurface.cardStrong)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(PaletteSurface.stroke, lineWidth: 0.5)
+                }
+        }
+        .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 10)
         .animation(.crFast, value: query.isEmpty)
     }
 }
@@ -276,7 +295,7 @@ private struct PaletteGroupHeader: View {
         HStack {
             Text(title.uppercased())
                 .font(.system(size: 9.5, weight: .bold)).tracking(1.1)
-                .foregroundStyle(Color(white: 1, opacity: 0.22))
+                .foregroundStyle(CRTheme.inkSubtle)
             Spacer()
         }
         .padding(.horizontal, 10).padding(.top, 10).padding(.bottom, 3)
@@ -305,14 +324,14 @@ private struct PaletteRow: View {
                 HStack(spacing: 6) {
                     Text(command.label)
                         .font(.system(size: 13, weight: isSelected ? .semibold : .medium))
-                        .foregroundStyle(.white.opacity(isSelected ? 1.0 : 0.78))
+                        .foregroundStyle(CRTheme.ink.opacity(isSelected ? 1.0 : 0.86))
                     if isRecent {
                         CRTag(text: "recent", tint: CRTheme.brandElectric)
                     }
                 }
                 Text(command.hint)
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(isSelected ? 0.44 : 0.28))
+                    .foregroundStyle(CRTheme.inkSoft.opacity(isSelected ? 0.95 : 0.82))
             }
 
             Spacer(minLength: 0)
@@ -321,24 +340,30 @@ private struct PaletteRow: View {
                 if let sc = command.shortcut {
                     Text(sc)
                         .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Color(white: 1, opacity: isSelected ? 0.38 : 0.18))
+                        .foregroundStyle(CRTheme.inkSubtle.opacity(isSelected ? 0.95 : 0.78))
                         .padding(.horizontal, 6).padding(.vertical, 2.5)
                         .background {
                             RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                .fill(Color(white: 1, opacity: 0.07))
+                                .fill(PaletteSurface.cardStrong)
                                 .overlay {
                                     RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                        .strokeBorder(Color(white: 1, opacity: 0.09), lineWidth: 0.5)
+                                        .strokeBorder(PaletteSurface.stroke, lineWidth: 0.5)
                                 }
                         }
                 }
-                if isSelected { KbdChip("↵").transition(.opacity) }
+                if isSelected { KbdChip("↵", dark: false).transition(.opacity) }
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(isSelected ? Color(white: 1, opacity: 0.09) : .clear)
+                .fill(isSelected ? PaletteSurface.rowSelected : .clear)
+                .overlay {
+                    if isSelected {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .strokeBorder(CRTheme.brandElectric.opacity(0.18), lineWidth: 0.5)
+                    }
+                }
         }
         .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .animation(.crFast, value: isSelected)
@@ -352,9 +377,9 @@ private struct PaletteEmptyState: View {
         VStack(spacing: 11) {
             Image(systemName: "questionmark.circle")
                 .font(.system(size: 26, weight: .ultraLight))
-                .foregroundStyle(Color(white: 1, opacity: 0.16)).symbolRenderingMode(.hierarchical)
+                .foregroundStyle(CRTheme.inkSubtle).symbolRenderingMode(.hierarchical)
             Text("No matching commands")
-                .font(.system(size: 13)).foregroundStyle(Color(white: 1, opacity: 0.28))
+                .font(.system(size: 13)).foregroundStyle(CRTheme.inkSoft)
         }
         .frame(maxWidth: .infinity).padding(.vertical, 30)
     }
@@ -378,8 +403,8 @@ private struct PaletteHint: View {
     let keys: [String]; let label: String
     var body: some View {
         HStack(spacing: 3) {
-            ForEach(keys, id: \.self) { KbdChip($0) }
-            Text(label).font(.system(size: 10.5)).foregroundStyle(Color(white: 1, opacity: 0.20))
+            ForEach(keys, id: \.self) { KbdChip($0, dark: false) }
+            Text(label).font(.system(size: 10.5)).foregroundStyle(CRTheme.inkSubtle)
         }
     }
 }

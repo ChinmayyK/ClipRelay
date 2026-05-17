@@ -80,10 +80,7 @@ impl IdentityKey {
     pub fn fingerprint_display(&self) -> String {
         let fp = self.fingerprint();
         // Encode first 16 bytes as 32 hex chars, then group into 4-char chunks.
-        let hex: String = fp[..16]
-            .iter()
-            .map(|b| format!("{:02X}", b))
-            .collect();
+        let hex: String = fp[..16].iter().map(|b| format!("{:02X}", b)).collect();
         hex.chars()
             .collect::<Vec<_>>()
             .chunks(4)
@@ -241,7 +238,10 @@ pub fn ct_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.iter()
+        .zip(b.iter())
+        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+        == 0
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -293,7 +293,11 @@ mod tests {
         // Must NOT be all-zeros (placeholder bug).
         assert_ne!(bytes, [0u8; 32], "to_bytes() must return private scalar");
         // Must NOT equal the public key bytes.
-        assert_ne!(&bytes, key.public.as_bytes(), "to_bytes() must not return public key");
+        assert_ne!(
+            &bytes,
+            key.public.as_bytes(),
+            "to_bytes() must not return public key"
+        );
         // Reloading from private bytes must reproduce the same public key.
         let reloaded = IdentityKey::from_bytes(bytes);
         assert_eq!(reloaded.public.as_bytes(), key.public.as_bytes());
@@ -310,7 +314,11 @@ mod tests {
         assert_eq!(parts.len(), 8, "fingerprint should have 8 groups: {}", disp);
         for part in parts {
             assert_eq!(part.len(), 4, "each group should be 4 chars: {}", part);
-            assert!(part.chars().all(|c| c.is_ascii_hexdigit()), "non-hex char in: {}", part);
+            assert!(
+                part.chars().all(|c| c.is_ascii_hexdigit()),
+                "non-hex char in: {}",
+                part
+            );
         }
     }
 
@@ -319,7 +327,11 @@ mod tests {
         for _ in 0..20 {
             let pin = generate_pairing_pin();
             assert_eq!(pin.len(), 6, "PIN must be 6 digits: {}", pin);
-            assert!(pin.chars().all(|c| c.is_ascii_digit()), "non-digit in PIN: {}", pin);
+            assert!(
+                pin.chars().all(|c| c.is_ascii_digit()),
+                "non-digit in PIN: {}",
+                pin
+            );
         }
     }
 

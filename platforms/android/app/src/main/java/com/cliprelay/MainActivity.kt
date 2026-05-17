@@ -206,6 +206,7 @@ class MainActivity : AppCompatActivity() {
             isClickable = true; isFocusable = true
             background = ripple(cr(R.color.cr_ripple))
             setOnClickListener { onClick() }
+            installPressFeedback()
 
             // Active indicator pill at very top
             addView(View(this@MainActivity).apply {
@@ -480,6 +481,7 @@ class MainActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
             setOnClickListener { launchService(); refreshDashboard() }
+            installPressFeedback()
         }
 
         secondaryActionsContainer = LinearLayout(this).apply {
@@ -774,6 +776,7 @@ class MainActivity : AppCompatActivity() {
             background = ripple(cr(R.color.cr_ripple))
             setPadding(0, dp(13), 0, dp(13))
             setOnClickListener { onClick() }
+            installPressFeedback()
 
             addView(TextView(this@MainActivity).apply {
                 text = label
@@ -1303,8 +1306,10 @@ class MainActivity : AppCompatActivity() {
                 putExtra(ClipRelayService.EXTRA_CLIPBOARD_TEXT, entry.preview)
             }
             ContextCompat.startForegroundService(this@MainActivity, svc)
+            showSnack("Applied to clipboard")
             rebuildFeed()
         }
+        installPressFeedback()
     }
 
     private fun buildProgressStrip(fraction: Double): FrameLayout {
@@ -1385,6 +1390,7 @@ class MainActivity : AppCompatActivity() {
             }
             isClickable = true; isFocusable = true
             setOnClickListener { onClick() }
+            installPressFeedback()
         }
 
     private fun vSpace(size: Int) = Space(this).apply {
@@ -1402,6 +1408,25 @@ class MainActivity : AppCompatActivity() {
     private fun ripple(rippleColor: Int, bgColor: Int): android.graphics.drawable.Drawable =
         RippleDrawable(android.content.res.ColorStateList.valueOf(rippleColor),
             ColorDrawable(bgColor), null)
+
+    private fun View.installPressFeedback() {
+        stateListAnimator = null
+        isHapticFeedbackEnabled = true
+        setOnTouchListener { v, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    v.animate().cancel()
+                    v.animate().scaleX(0.97f).scaleY(0.97f).alpha(0.88f).setDuration(70).start()
+                    v.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.animate().cancel()
+                    v.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(120).start()
+                }
+            }
+            false
+        }
+    }
 
     private fun alphaBlend(color: Int, alpha: Float): Int {
         val a = (255 * alpha).toInt().coerceIn(0, 255)

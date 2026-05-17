@@ -46,6 +46,7 @@ final class ClipRelayStore: ObservableObject {
     @Published var pinnedItemIds: Set<Int64> = []
 
     private var lastActivityId: Int64 = 0
+    private var lastMirroredAutoAppliedEntryId: Int64 = 0
     private let ipc: ClipRelayIPCClient
     private var pollTimer: Timer?
     private var pendingRename: PeerViewModel? = nil
@@ -177,6 +178,8 @@ final class ClipRelayStore: ObservableObject {
             )
             if lastActivityId > 0 {
                 await pollActivityFeedIncremental()
+            } else {
+                await primeActivityFeed()
             }
         } catch {
             isRunning       = false
@@ -389,6 +392,7 @@ final class ClipRelayStore: ObservableObject {
             let entries    = try await ipc.activityRecent(limit: 100)
             activityFeed   = entries
             lastActivityId = entries.first?.id ?? 0
+            mirrorAutoAppliedClipboardIfNeeded(entries: entries)
         } catch {}
     }
 
@@ -400,6 +404,7 @@ final class ClipRelayStore: ObservableObject {
                 activityFeed.insert(contentsOf: newEntries.reversed(), at: 0)
                 if activityFeed.count > 200 { activityFeed = Array(activityFeed.prefix(200)) }
                 lastActivityId = newEntries.map(\.id).max() ?? lastActivityId
+                mirrorAutoAppliedClipboardIfNeeded(entries: newEntries)
             }
             // Keep pendingClipboardCount in sync with local feed state.
             // This stays accurate between status() polls (which happen less often when idle).
@@ -436,6 +441,35 @@ final class ClipRelayStore: ObservableObject {
     func setAutoApplyClipboard(enabled: Bool) async {
         clipboardPolicy.autoApply = enabled
         try? await ipc.setAutoApplyClipboard(enabled: enabled)
+    }
+
+    @MainActor
+    private func primeActivityFeed() async {
+        do {
+            let entries = try await ipc.activityRecent(limit: 20)
+            activityFeed = entries
+            lastActivityId = entries.first?.id ?? 0
+            mirrorAutoAppliedClipboardIfNeeded(entries: entries)
+            pendingClipboardCount = activityFeed.filter { $0.isApplicable }.count
+        } catch {}
+    }
+
+    @MainActor
+    private func mirrorAutoAppliedClipboardIfNeeded(entries: [IpcActivityEntry]) {
+        let pendingMirror = entries
+            .filter {
+                $0.kind == "remote_clipboard_available" &&
+                $0.applied_locally &&
+                $0.id > lastMirroredAutoAppliedEntryId &&
+                !($0.text_preview?.isEmpty ?? true)
+            }
+            .sorted { $0.id < $1.id }
+
+        for entry in pendingMirror {
+            guard let text = entry.text_preview else { continue }
+            applyClipboardLocally(text: text)
+            lastMirroredAutoAppliedEntryId = entry.id
+        }
     }
 
     // MARK: - Settings

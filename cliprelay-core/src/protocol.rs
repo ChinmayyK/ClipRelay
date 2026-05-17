@@ -212,7 +212,7 @@ pub struct HelloFrame {
     pub ecdh_pubkey: [u8; 32],
     pub nonce: [u8; 16],
     /// Optional structured platform metadata (encoded as JSON string).
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// This travels over bincode, so it must always occupy a stable field slot.
     pub metadata_json: Option<String>,
 }
 
@@ -225,7 +225,7 @@ pub struct HelloAckFrame {
     pub ecdh_pubkey: [u8; 32],
     pub nonce_response: [u8; 16],
     pub trusted: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// This travels over bincode, so it must always occupy a stable field slot.
     pub metadata_json: Option<String>,
 }
 
@@ -259,7 +259,6 @@ pub enum AppMessage {
         /// Resume from this chunk index (0 = fresh start).
         #[serde(default)]
         resume_from_chunk: u32,
-        #[serde(skip_serializing_if = "Option::is_none")]
         reject_reason: Option<String>,
     },
     /// One chunk of file data (dedicated file transfer channel).
@@ -282,7 +281,6 @@ pub enum AppMessage {
     FileTransferCompleteAck {
         transfer_id: [u8; 16],
         success: bool,
-        #[serde(skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     /// Either side cancels a transfer in progress.
@@ -365,11 +363,67 @@ mod tests {
         let items: Vec<ClipboardContent> = vec![
             ClipboardContent::Text(String::new()),
             ClipboardContent::Text("x".into()),
-            ClipboardContent::Image { mime: "image/png".into(), data: vec![] },
-            ClipboardContent::Image { mime: "image/png".into(), data: vec![0] },
+            ClipboardContent::Image {
+                mime: "image/png".into(),
+                data: vec![],
+            },
+            ClipboardContent::Image {
+                mime: "image/png".into(),
+                data: vec![0],
+            },
         ];
         for item in &items {
             assert_eq!(item.is_empty(), item.byte_len() == 0);
+        }
+    }
+
+    #[test]
+    fn optional_wire_fields_round_trip_through_bincode() {
+        let hello = HelloFrame {
+            version: PROTOCOL_VERSION,
+            device_id: Uuid::nil(),
+            device_name: "PeerA".into(),
+            identity_pubkey: [1u8; 32],
+            ecdh_pubkey: [2u8; 32],
+            nonce: [3u8; 16],
+            metadata_json: None,
+        };
+        let ack = HelloAckFrame {
+            version: PROTOCOL_VERSION,
+            device_id: Uuid::nil(),
+            device_name: "PeerB".into(),
+            identity_pubkey: [4u8; 32],
+            ecdh_pubkey: [5u8; 32],
+            nonce_response: [6u8; 16],
+            trusted: false,
+            metadata_json: None,
+        };
+        let file_ack = AppMessage::FileTransferCompleteAck {
+            transfer_id: [7u8; 16],
+            success: true,
+            error: None,
+        };
+
+        let decoded_hello: HelloFrame =
+            bincode::deserialize(&bincode::serialize(&hello).unwrap()).unwrap();
+        let decoded_ack: HelloAckFrame =
+            bincode::deserialize(&bincode::serialize(&ack).unwrap()).unwrap();
+        let decoded_file_ack: AppMessage =
+            bincode::deserialize(&bincode::serialize(&file_ack).unwrap()).unwrap();
+
+        assert!(decoded_hello.metadata_json.is_none());
+        assert!(decoded_ack.metadata_json.is_none());
+        match decoded_file_ack {
+            AppMessage::FileTransferCompleteAck {
+                transfer_id,
+                success,
+                error,
+            } => {
+                assert_eq!(transfer_id, [7u8; 16]);
+                assert!(success);
+                assert!(error.is_none());
+            }
+            other => panic!("unexpected decoded message: {other:?}"),
         }
     }
 }

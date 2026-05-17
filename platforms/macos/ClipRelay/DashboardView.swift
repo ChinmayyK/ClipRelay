@@ -45,10 +45,11 @@ private struct Sidebar: View {
             CRSidebarMaterial().ignoresSafeArea()
             CRTheme.sidebarOverlay.ignoresSafeArea()
 
-            // Subtle top shimmer
+            // Subtle top shimmer (adaptive: just-visible in light, barely-there in dark)
             VStack {
-                LinearGradient(colors: [Color(white: 1, opacity: 0.028), .clear],
-                               startPoint: .top, endPoint: .bottom)
+                LinearGradient(
+                    colors: [CRTheme.sidebarInk.opacity(0.018), .clear],
+                    startPoint: .top, endPoint: .bottom)
                     .frame(height: 80)
                 Spacer()
             }
@@ -59,7 +60,7 @@ private struct Sidebar: View {
 
                 Text("NAVIGATION")
                     .font(.system(size: 9.5, weight: .bold)).tracking(1.2)
-                    .foregroundStyle(Color(white: 1, opacity: 0.20))
+                    .foregroundStyle(CRTheme.sidebarInkSubtle)
                     .padding(.horizontal, 18).padding(.bottom, 4)
 
                 VStack(spacing: 1) {
@@ -67,11 +68,11 @@ private struct Sidebar: View {
                                      badge: 0, shortcut: "⌘1",
                                      isSelected: store.selectedSection == .timeline,
                                      action: { store.selectedSection = .timeline })
-                    SidebarNavButton(icon: "rectangle.connected.to.line.below", label: "Devices",
+                    SidebarNavButton(icon: "desktopcomputer", label: "Devices",
                                      badge: store.devices.count, shortcut: "⌘2",
                                      isSelected: store.selectedSection == .devices,
                                      action: { store.selectedSection = .devices })
-                    SidebarNavButton(icon: "shield.checkered", label: "Trust",
+                    SidebarNavButton(icon: "checkmark.shield", label: "Trust",
                                      badge: untrustedCount, shortcut: "⌘3",
                                      isSelected: store.selectedSection == .trust,
                                      action: { store.selectedSection = .trust })
@@ -110,12 +111,12 @@ private struct SidebarHeader: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("ClipRelay")
                         .font(.system(size: 14.5, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(CRTheme.sidebarInk)
                     HStack(spacing: 4) {
                         StatusDot(isOnline: store.isRunning, size: 5.5)
                         Text(store.isRunning ? "Active" : "Offline")
                             .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(Color(white: 1, opacity: 0.40))
+                            .foregroundStyle(CRTheme.sidebarInkSoft)
                     }
                 }
                 Spacer()
@@ -123,9 +124,9 @@ private struct SidebarHeader: View {
             if !store.connectionBanner.isEmpty {
                 HStack(spacing: 5) {
                     Image(systemName: "wifi").font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(Color(white: 1, opacity: 0.24))
+                        .foregroundStyle(CRTheme.sidebarInkSubtle)
                     Text(store.connectionBanner).font(.system(size: 11))
-                        .foregroundStyle(Color(white: 1, opacity: 0.32))
+                        .foregroundStyle(CRTheme.sidebarInkSoft)
                         .lineLimit(1).truncationMode(.tail)
                 }
             }
@@ -151,7 +152,7 @@ private struct SidebarFooter: View {
                 Circle().fill(syncColor).frame(width: 5.5, height: 5.5)
                 Text(syncLabel).font(.system(size: 10, weight: .bold)).tracking(0.6).foregroundStyle(syncColor)
                 Spacer()
-                Text("Local-first").font(.system(size: 10)).foregroundStyle(Color(white: 1, opacity: 0.24))
+                Text("Local-first").font(.system(size: 10)).foregroundStyle(CRTheme.sidebarInkSubtle)
             }
         }
         .padding(.horizontal, 16).padding(.bottom, 20)

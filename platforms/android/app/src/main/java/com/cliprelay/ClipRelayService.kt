@@ -27,14 +27,17 @@ import android.provider.Settings
 import android.util.Log
 import android.webkit.MimeTypeMap
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.UUID
 
 // ── JNI Bridge ────────────────────────────────────────────────────────────────
 // The prebuilt .so exports Java_com_cliprelay_ClipRelayJni_* symbols.
@@ -62,7 +65,7 @@ object ClipRelayJni {
     const val CR_EVENT_ACTIVITY_UPDATED        = 16
 
     // ── Core engine ───────────────────────────────────────────────────────────
-    @JvmStatic external fun start(deviceName: String?, port: Int, dataDir: String?): Long
+    @JvmStatic external fun start(deviceName: String?, port: Int, dataDir: String?, fileSaveDir: String?): Long
     @JvmStatic external fun stop(handle: Long)
 
     // ── Clipboard push ────────────────────────────────────────────────────────
@@ -77,6 +80,7 @@ object ClipRelayJni {
 
     // ── Common event accessors ────────────────────────────────────────────────
     @JvmStatic external fun eventText(event: Long): String?
+    @JvmStatic external fun eventDeviceId(event: Long): String?
     @JvmStatic external fun eventBinaryData(event: Long): ByteArray?
     @JvmStatic external fun eventDeviceName(event: Long): String?
     @JvmStatic external fun eventMimeType(event: Long): String?
@@ -90,6 +94,10 @@ object ClipRelayJni {
     @JvmStatic external fun eventActivityId(event: Long): Long
     /** Apply a remote clipboard item to the local clipboard by its content hash. */
     @JvmStatic external fun applyClipboardByHash(engineHandle: Long, hash: String): Int
+    /** Mark a peer as trusted after the user approves the pairing prompt. */
+    @JvmStatic external fun trustPeer(engineHandle: Long, deviceId: String): Int
+    /** Reject a peer after the user denies the pairing prompt. */
+    @JvmStatic external fun rejectPeer(engineHandle: Long, deviceId: String): Int
 
     // ── File transfer accessors ───────────────────────────────────────────────
     @JvmStatic external fun eventTransferId(event: Long): String?
@@ -268,6 +276,7 @@ class ClipRelayService : Service() {
     // Self-connection filter: first 8 chars of our UUID match the NSD service name suffix.
     // Set once the engine starts; used in makeResolveListener() to skip our own advertisement.
     private var myDeviceUuidPrefix: String? = null
+    private var myDeviceId: String? = null
 
     // Actual NSD service name as reported by onServiceRegistered (may differ from requested
     // if Android resolved a collision by appending " (2)" etc.).
@@ -276,6 +285,27 @@ class ClipRelayService : Service() {
     // Network change callback — restarts NSD when the device switches WiFi networks
     // or reconnects after being offline (e.g. waking from sleep, roaming).
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var pairingReceiverRegistered = false
+
+    private val pairingResultReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != PairingActivity.ACTION_PAIRING_RESULT) return
+            val deviceId = intent.getStringExtra(PairingActivity.EXTRA_DEVICE_ID) ?: return
+            val approved = intent.getBooleanExtra(PairingActivity.EXTRA_APPROVED, false)
+            val h = engineHandle
+            if (h == 0L) return
+
+            val result = if (approved) {
+                ClipRelayJni.trustPeer(h, deviceId)
+            } else {
+                ClipRelayJni.rejectPeer(h, deviceId)
+            }
+
+            Log.i(TAG, "Pairing result for $deviceId approved=$approved result=$result")
+            notificationManager.cancel(NOTIF_ID_TOFU)
+            persistStatus()
+        }
+    }
 
     // NSD retry after all peers disconnect — exponential backoff, max 60 s.
     private val nsdRetryCount = AtomicLong(0L)
@@ -312,6 +342,7 @@ class ClipRelayService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
+        registerPairingReceiver()
         acquireWakeLockIfNeeded()
         setServiceRunning(true)
     }
@@ -412,7 +443,16 @@ class ClipRelayService : Service() {
             if (!engineStarted.getAndSet(true)) {
                 val deviceName = resolvedDeviceName()
                 val dataDir = File(filesDir, "cliprelay").also { it.mkdirs() }.absolutePath
-                engineHandle = ClipRelayJni.start(deviceName, 0, dataDir)
+                val fileSaveDir = (
+                    getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS)
+                        ?: filesDir
+                    ).resolve("ClipRelay").apply { mkdirs() }
+                engineHandle = ClipRelayJni.start(
+                    deviceName,
+                    0,
+                    dataDir,
+                    fileSaveDir.absolutePath
+                )
 
                 if (engineHandle == 0L) {
                     Log.e(TAG, "Rust engine failed to start")
@@ -426,7 +466,8 @@ class ClipRelayService : Service() {
                 scheduleClipboardWatch()
                 acquireMulticastLock()  // must precede NSD so mDNS packets aren't filtered
                 // Cache our own UUID prefix so NSD can filter self-connections.
-                myDeviceUuidPrefix = ClipRelayJni.getDeviceId(engineHandle)?.take(8)
+                myDeviceId = ClipRelayJni.getDeviceId(engineHandle)
+                myDeviceUuidPrefix = myDeviceId?.take(8)
                 startNsdDiscovery()   // advertise + browse so the Mac can find us
                 registerNetworkCallback() // restart NSD on WiFi changes
                 persistStatus()
@@ -472,6 +513,7 @@ class ClipRelayService : Service() {
         releaseWakeLock()
         setServiceRunning(false)
         persistStatus()
+        unregisterPairingReceiver()
         super.onDestroy()
     }
 
@@ -703,9 +745,10 @@ class ClipRelayService : Service() {
 
             // ── Trust (TOFU) prompt ───────────────────────────────────────────
             ClipRelayJni.CR_EVENT_TOFU_PROMPT -> {
+                val deviceId = ClipRelayJni.eventDeviceId(ev) ?: return
                 val name = ClipRelayJni.eventDeviceName(ev) ?: "Unknown device"
                 val fp   = ClipRelayJni.eventFingerprint(ev) ?: ""
-                showTofuNotification(name, fp)
+                showPairingPrompt(deviceId, name, fp)
             }
 
             // ── Peer connected ────────────────────────────────────────────────
@@ -758,40 +801,54 @@ class ClipRelayService : Service() {
     // ── Activity feed helpers ─────────────────────────────────────────────────
 
     private fun addActivity(entry: ActivityEntry) {
-        activityFeed.add(0, entry)
-        while (activityFeed.size > ACTIVITY_FEED_MAX) activityFeed.removeLastOrNull()
+        synchronized(feedLock) {
+            activityFeed.addFirst(entry)
+            while (activityFeed.size > ACTIVITY_FEED_MAX) activityFeed.removeLast()
+        }
         broadcastActivityUpdated()
     }
 
     private fun updateActivityTransferProgress(tid: String, percent: Int) {
-        val idx = activityFeed.indexOfFirst { it.transferId == tid }
-        if (idx >= 0) {
-            activityFeed[idx] = activityFeed[idx].copy(
-                kind = ActivityKind.FILE_TRANSFER_PROGRESS,
-                progressPercent = percent
-            )
-            broadcastActivityUpdated()
+        synchronized(feedLock) {
+            val idx = activityFeed.indexOfFirst { it.transferId == tid }
+            if (idx >= 0) {
+                activityFeed[idx] = activityFeed[idx].copy(
+                    kind = ActivityKind.FILE_TRANSFER_PROGRESS,
+                    progressPercent = percent
+                )
+            } else {
+                return
+            }
         }
+        broadcastActivityUpdated()
     }
 
     private fun updateActivityTransferComplete(tid: String, destPath: String) {
-        val idx = activityFeed.indexOfFirst { it.transferId == tid }
-        if (idx >= 0) {
-            activityFeed[idx] = activityFeed[idx].copy(
-                kind = ActivityKind.FILE_TRANSFER_COMPLETE,
-                progressPercent = 100,
-                destPath = destPath
-            )
-            broadcastActivityUpdated()
+        synchronized(feedLock) {
+            val idx = activityFeed.indexOfFirst { it.transferId == tid }
+            if (idx >= 0) {
+                activityFeed[idx] = activityFeed[idx].copy(
+                    kind = ActivityKind.FILE_TRANSFER_COMPLETE,
+                    progressPercent = 100,
+                    destPath = destPath
+                )
+            } else {
+                return
+            }
         }
+        broadcastActivityUpdated()
     }
 
     private fun updateActivityTransferFailed(tid: String) {
-        val idx = activityFeed.indexOfFirst { it.transferId == tid }
-        if (idx >= 0) {
-            activityFeed[idx] = activityFeed[idx].copy(kind = ActivityKind.FILE_TRANSFER_FAILED)
-            broadcastActivityUpdated()
+        synchronized(feedLock) {
+            val idx = activityFeed.indexOfFirst { it.transferId == tid }
+            if (idx >= 0) {
+                activityFeed[idx] = activityFeed[idx].copy(kind = ActivityKind.FILE_TRANSFER_FAILED)
+            } else {
+                return
+            }
         }
+        broadcastActivityUpdated()
     }
 
     private fun broadcastActivityUpdated() {
@@ -1174,7 +1231,7 @@ class ClipRelayService : Service() {
             serviceName = "cliprelay-$uuidPrefix-$safeName"
             serviceType = NSD_SERVICE_TYPE
             port        = DEFAULT_CLIPRELAY_PORT
-            setAttribute("id", ClipRelayJni.getDeviceId(engineHandle) ?: "")
+            setAttribute("id", myDeviceId ?: "")
             setAttribute("v", "3")
         }
 
@@ -1270,6 +1327,29 @@ class ClipRelayService : Service() {
                     Log.d(TAG, "NSD: skipping self by UUID prefix '${info.serviceName}'")
                     return
                 }
+
+                val peerVersion = info.attributeString("v")
+                if (peerVersion != null && peerVersion != "3") {
+                    Log.i(TAG, "NSD: skipping ${info.serviceName} due to protocol version $peerVersion")
+                    return
+                }
+
+                val peerDeviceId = info.attributeString("id")
+                val myId = myDeviceId
+                if (!peerDeviceId.isNullOrBlank() && !myId.isNullOrBlank()) {
+                    if (peerDeviceId.equals(myId, ignoreCase = true)) {
+                        Log.d(TAG, "NSD: skipping self-resolved peer id $peerDeviceId")
+                        return
+                    }
+                    if (!shouldInitiateDiscoveredSession(myId, peerDeviceId)) {
+                        Log.i(
+                            TAG,
+                            "NSD: $peerDeviceId should initiate against $myId; waiting for inbound session"
+                        )
+                        return
+                    }
+                }
+
                 val h = engineHandle
                 if (h != 0L) {
                     val result = ClipRelayJni.connectToPeer(h, ip, port)
@@ -1373,6 +1453,40 @@ class ClipRelayService : Service() {
     private fun cancelNsdRetry() {
         nsdRetryRunnable?.let { handler.removeCallbacks(it) }
         nsdRetryRunnable = null
+    }
+
+    private fun NsdServiceInfo.attributeString(key: String): String? =
+        attributes[key]
+            ?.let { bytes -> String(bytes, StandardCharsets.UTF_8).trim() }
+            ?.takeIf { it.isNotEmpty() }
+
+    private fun shouldInitiateDiscoveredSession(myId: String, peerId: String): Boolean {
+        val normalizedMine = normalizeUuidForCompare(myId) ?: return true
+        val normalizedPeer = normalizeUuidForCompare(peerId) ?: return true
+        return normalizedMine < normalizedPeer
+    }
+
+    private fun normalizeUuidForCompare(raw: String): String? =
+        runCatching { UUID.fromString(raw) }.getOrNull()
+            ?.toString()
+            ?.replace("-", "")
+            ?.lowercase()
+
+    private fun registerPairingReceiver() {
+        if (pairingReceiverRegistered) return
+        ContextCompat.registerReceiver(
+            this,
+            pairingResultReceiver,
+            IntentFilter(PairingActivity.ACTION_PAIRING_RESULT),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        pairingReceiverRegistered = true
+    }
+
+    private fun unregisterPairingReceiver() {
+        if (!pairingReceiverRegistered) return
+        runCatching { unregisterReceiver(pairingResultReceiver) }
+        pairingReceiverRegistered = false
     }
 
     // ── Live settings application ─────────────────────────────────────────────
@@ -1525,18 +1639,27 @@ class ClipRelayService : Service() {
     // Only fired for: trust request, file received, critical failure.
     // NEVER fired for: clipboard text/image sync.
 
-    private fun showTofuNotification(deviceName: String, fingerprint: String) {
+    private fun showPairingPrompt(deviceId: String, deviceName: String, fingerprint: String) {
+        val pairingIntent = Intent(this, PairingActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            putExtra(PairingActivity.EXTRA_DEVICE_ID, deviceId)
+            putExtra(PairingActivity.EXTRA_DEVICE_NAME, deviceName)
+            putExtra(PairingActivity.EXTRA_FINGERPRINT, fingerprint)
+            putExtra(PairingActivity.EXTRA_PIN, pairingPin(fingerprint))
+        }
         val launchPi = PendingIntent.getActivity(
-            this, 20,
-            packageManager.getLaunchIntentForPackage(packageName),
+            this, deviceId.hashCode(),
+            pairingIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
+
+        runCatching { startActivity(pairingIntent) }
 
         val notif = NotificationCompat.Builder(this, CHAN_ALERTS)
             .setContentTitle("$deviceName wants to connect")
             .setContentText("Fingerprint: ${fingerprint.take(23)}…")
             .setStyle(NotificationCompat.BigTextStyle()
-                .bigText("Open ClipRelay to trust or deny this device.\n\nFingerprint: $fingerprint"))
+                .bigText("Tap to trust or deny this device.\n\nFingerprint: $fingerprint"))
             .setSmallIcon(android.R.drawable.ic_lock_lock)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
@@ -1545,6 +1668,14 @@ class ClipRelayService : Service() {
             .build()
 
         getSystemService(NotificationManager::class.java).notify(NOTIF_ID_TOFU, notif)
+    }
+
+    private fun pairingPin(fingerprint: String): String {
+        val digits = fingerprint
+            .filter { it.isDigit() }
+            .take(6)
+            .padEnd(6, '0')
+        return digits.ifBlank { "000000" }
     }
 
     private fun showFileReceivedNotification(fromDevice: String, fileName: String, uri: Uri?) {
@@ -1602,6 +1733,7 @@ class ClipRelayService : Service() {
     private fun persistStatus() {
         val editor = prefs().edit()
             .putString("local_device_name", resolvedDeviceName())
+            .putString("device_id", if (engineHandle != 0L) ClipRelayJni.getDeviceId(engineHandle) else null)
             .putBoolean("peer_connected", connectedPeerNames.isNotEmpty())
             .putInt("connected_count", connectedPeerNames.size)
             .putStringSet("connected_names", connectedPeerNames.toSet())

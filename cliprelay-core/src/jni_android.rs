@@ -39,6 +39,7 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_start(
     device_name: JString,
     port: jint,
     data_dir: JString,
+    file_save_dir: JString,
 ) -> jlong {
     let name: String = env
         .get_string(&device_name)
@@ -46,6 +47,10 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_start(
         .unwrap_or_else(|_| whoami::devicename());
     let data_root = env
         .get_string(&data_dir)
+        .ok()
+        .map(|s| PathBuf::from(String::from(s)));
+    let file_save_root = env
+        .get_string(&file_save_dir)
         .ok()
         .map(|s| PathBuf::from(String::from(s)));
 
@@ -60,7 +65,7 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_start(
         port,
         ..EngineConfig::default()
     };
-    let config = config_with_android_paths(config, data_root);
+    let config = config_with_android_paths(config, data_root, file_save_root);
 
     let (tx, rx) = mpsc::channel(256);
     match rt().block_on(Engine::start(config, tx)) {
@@ -78,17 +83,24 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_start(
     }
 }
 
-fn config_with_android_paths(config: EngineConfig, data_root: Option<PathBuf>) -> EngineConfig {
-    let Some(data_root) = data_root.filter(|path| !path.as_os_str().is_empty()) else {
-        return config;
-    };
+fn config_with_android_paths(
+    config: EngineConfig,
+    data_root: Option<PathBuf>,
+    file_save_root: Option<PathBuf>,
+) -> EngineConfig {
+    let mut updated = config;
 
-    EngineConfig {
-        trust_store_path: data_root.join("trust.json"),
-        peer_store_path: data_root.join("peers.json"),
-        identity_path: data_root.join("identity.key"),
-        ..config
+    if let Some(data_root) = data_root.filter(|path| !path.as_os_str().is_empty()) {
+        updated.trust_store_path = data_root.join("trust.json");
+        updated.peer_store_path = data_root.join("peers.json");
+        updated.identity_path = data_root.join("identity.key");
     }
+
+    if let Some(file_save_root) = file_save_root.filter(|path| !path.as_os_str().is_empty()) {
+        updated.file_save_dir = Some(file_save_root);
+    }
+
+    updated
 }
 
 // ── stop ──────────────────────────────────────────────────────────────────────
@@ -317,6 +329,38 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_eventDeviceName(
         _ => None,
     };
     name.and_then(|n| env.new_string(n).ok())
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+// ── eventDeviceId ─────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "system" fn Java_com_cliprelay_ClipRelayJni_eventDeviceId(
+    mut env: JNIEnv,
+    _class: JClass,
+    event: jlong,
+) -> jstring {
+    if event == 0 {
+        return std::ptr::null_mut();
+    }
+    use crate::engine::EngineEvent::*;
+    let ev = unsafe { &*(event as *const crate::engine::EngineEvent) };
+    let id = match ev {
+        ClipboardReceived { from_device, .. } => Some(*from_device),
+        HistoryMetadataReceived { from_device, .. } => Some(*from_device),
+        ClipboardSynced { peer_device, .. } => Some(*peer_device),
+        ClipboardSyncFailed { peer_device, .. } => Some(*peer_device),
+        TofuPrompt { device_id, .. } => Some(*device_id),
+        PeerConnected { device_id, .. } => Some(*device_id),
+        PeerDisconnected { device_id, .. } => Some(*device_id),
+        FileTransferIncoming { from_device, .. } => Some(*from_device),
+        FileTransferProgress { from_device, .. } => Some(*from_device),
+        FileTransferComplete { from_device, .. } => Some(*from_device),
+        FileTransferFailed { from_device, .. } => Some(*from_device),
+        _ => None,
+    };
+    id.and_then(|value| env.new_string(value.to_string()).ok())
         .map(|s| s.into_raw())
         .unwrap_or(std::ptr::null_mut())
 }
@@ -595,6 +639,56 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_applyClipboardByHash(
     }
 }
 
+// ── trustPeer / rejectPeer ───────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "system" fn Java_com_cliprelay_ClipRelayJni_trustPeer(
+    mut env: JNIEnv,
+    _class: JClass,
+    engine_ptr: jlong,
+    device_id_jstr: JString,
+) -> jint {
+    if engine_ptr == 0 {
+        return 0;
+    }
+    let device_id: String = match env.get_string(&device_id_jstr) {
+        Ok(s) => s.into(),
+        Err(_) => return 0,
+    };
+    let Ok(device_id) = uuid::Uuid::parse_str(&device_id) else {
+        return 0;
+    };
+    let h = unsafe { &*(engine_ptr as *const AndroidHandle) };
+    match rt().block_on(h.engine.trust_peer(device_id)) {
+        Ok(()) => 1,
+        Err(_) => 0,
+    }
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_cliprelay_ClipRelayJni_rejectPeer(
+    mut env: JNIEnv,
+    _class: JClass,
+    engine_ptr: jlong,
+    device_id_jstr: JString,
+) -> jint {
+    if engine_ptr == 0 {
+        return 0;
+    }
+    let device_id: String = match env.get_string(&device_id_jstr) {
+        Ok(s) => s.into(),
+        Err(_) => return 0,
+    };
+    let Ok(device_id) = uuid::Uuid::parse_str(&device_id) else {
+        return 0;
+    };
+    let h = unsafe { &*(engine_ptr as *const AndroidHandle) };
+    match rt().block_on(h.engine.reject_peer(device_id)) {
+        Ok(()) => 1,
+        Err(_) => 0,
+    }
+}
+
 // ── acceptFileTransfer ───────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -709,9 +803,9 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_applySyncSettings(
     _class: JClass,
     handle: jlong,
     sync_enabled: jboolean,
-    sync_text:    jboolean,
-    sync_images:  jboolean,
-    sync_files:   jboolean,
+    sync_text: jboolean,
+    sync_images: jboolean,
+    sync_files: jboolean,
 ) -> jint {
     if handle == 0 {
         return -1;
@@ -719,9 +813,9 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_applySyncSettings(
     let h = unsafe { &*(handle as *const AndroidHandle) };
     rt().block_on(h.engine.apply_sync_settings(
         sync_enabled != 0,
-        sync_text    != 0,
-        sync_images  != 0,
-        sync_files   != 0,
+        sync_text != 0,
+        sync_images != 0,
+        sync_files != 0,
     ));
     0
 }

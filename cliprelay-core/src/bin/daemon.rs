@@ -6,7 +6,9 @@ use cliprelay_core::{
     ipc::{IpcRequest, IpcResponse},
     peer_manager::PeerConnectionState,
     protocol::ClipboardContent,
-    settings::{ClipboardTemplate, PeerSettings, default_history_path, default_settings_path, SettingsStore},
+    settings::{
+        default_history_path, default_settings_path, ClipboardTemplate, PeerSettings, SettingsStore,
+    },
     trust::format_fingerprint,
 };
 use serde::Serialize;
@@ -63,7 +65,8 @@ async fn run() -> Result<()> {
         )
         .init();
 
-    let settings_store = SettingsStore::load(default_settings_path()).context("loading settings")?;
+    let settings_store =
+        SettingsStore::load(default_settings_path()).context("loading settings")?;
     let initial_settings = settings_store.get().clone();
 
     let mut config = EngineConfig::default();
@@ -166,13 +169,16 @@ async fn run() -> Result<()> {
                             }
                             {
                                 let mut history = reload_state.history.lock().await;
-                                let _ = history.set_max_entries(new_settings.effective_history_limit());
+                                let _ =
+                                    history.set_max_entries(new_settings.effective_history_limit());
                             }
                             reload_state.engine.apply_settings(new_settings).await;
                             tracing::info!("Settings hot-reload complete");
                         }
                         Err(e) => {
-                            tracing::warn!("Settings hot-reload failed (file may be mid-write): {e:#}");
+                            tracing::warn!(
+                                "Settings hot-reload failed (file may be mid-write): {e:#}"
+                            );
                         }
                     }
                 }
@@ -210,7 +216,12 @@ async fn handle_event(state: DaemonState, event: EngineEvent) -> Result<()> {
                 )?;
             }
 
-            store_incoming_clipboard(&state, activity_id, incoming_payload_json(activity_id, &content)).await;
+            store_incoming_clipboard(
+                &state,
+                activity_id,
+                incoming_payload_json(activity_id, &content),
+            )
+            .await;
             push_feedback(
                 &state,
                 FeedbackEvent {
@@ -378,7 +389,7 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
                 .filter(|peer| peer.status == PeerConnectionState::Connected)
                 .count();
             let pending_count = state.engine.pending_remote_clipboards().await.len();
-            let fingerprint   = state.engine.local_fingerprint();
+            let fingerprint = state.engine.local_fingerprint();
             Ok(IpcResponse::ok(json!({
                 "device_name":           settings.resolved_device_name(),
                 "port":                  settings.port,
@@ -432,7 +443,8 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
             let port = port.unwrap_or(default_port);
             let addr_str = format!("{}:{}", host, port);
             let ip = tokio::task::spawn_blocking(move || {
-                addr_str.to_socket_addrs()
+                addr_str
+                    .to_socket_addrs()
                     .ok()
                     .and_then(|mut it| it.next())
                     .map(|a| a.ip().to_string())
@@ -444,7 +456,10 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
             Ok(IpcResponse::ok_empty())
         }
         IpcRequest::DisconnectPeer { device_id } => {
-            state.engine.disconnect_peer(parse_uuid(&device_id)?).await?;
+            state
+                .engine
+                .disconnect_peer(parse_uuid(&device_id)?)
+                .await?;
             Ok(IpcResponse::ok_empty())
         }
         IpcRequest::TrustPeer { device_id } => {
@@ -470,11 +485,17 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
             Ok(IpcResponse::ok_empty())
         }
         IpcRequest::PauseSyncPeer { device_id } => {
-            state.engine.pause_sync_peer(parse_uuid(&device_id)?).await?;
+            state
+                .engine
+                .pause_sync_peer(parse_uuid(&device_id)?)
+                .await?;
             Ok(IpcResponse::ok_empty())
         }
         IpcRequest::ResumeSyncPeer { device_id } => {
-            state.engine.resume_sync_peer(parse_uuid(&device_id)?).await?;
+            state
+                .engine
+                .resume_sync_peer(parse_uuid(&device_id)?)
+                .await?;
             Ok(IpcResponse::ok_empty())
         }
         IpcRequest::ForgetDevice { device_id } => {
@@ -488,7 +509,9 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
                 .await?;
             Ok(IpcResponse::ok_empty())
         }
-        IpcRequest::PushText { text } => Ok(IpcResponse::ok(dispatch_text(&state, text, SyncTarget::All).await?)),
+        IpcRequest::PushText { text } => Ok(IpcResponse::ok(
+            dispatch_text(&state, text, SyncTarget::All).await?,
+        )),
         IpcRequest::PushTextTo { text, target } => Ok(IpcResponse::ok(
             dispatch_text(&state, text, SyncTarget::Device(parse_uuid(&target)?)).await?,
         )),
@@ -499,7 +522,12 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
                 data,
             };
             remember_history(&state, &content, current_device_name(&state).await).await?;
-            Ok(IpcResponse::ok(state.engine.push_clipboard_to(content, SyncTarget::All).await))
+            Ok(IpcResponse::ok(
+                state
+                    .engine
+                    .push_clipboard_to(content, SyncTarget::All)
+                    .await,
+            ))
         }
         IpcRequest::PushFile { name, data_base64 } => {
             let data = decode_base64(&data_base64)?;
@@ -508,7 +536,12 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
                 data,
             };
             remember_history(&state, &content, current_device_name(&state).await).await?;
-            Ok(IpcResponse::ok(state.engine.push_clipboard_to(content, SyncTarget::All).await))
+            Ok(IpcResponse::ok(
+                state
+                    .engine
+                    .push_clipboard_to(content, SyncTarget::All)
+                    .await,
+            ))
         }
         IpcRequest::RememberText { text } => {
             let content = ClipboardContent::Text(text);
@@ -518,12 +551,18 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
         }
         IpcRequest::History { last } => {
             let history = state.history.lock().await;
-            Ok(IpcResponse::ok(history.recent(last).cloned().collect::<Vec<_>>()))
+            Ok(IpcResponse::ok(
+                history.recent(last).cloned().collect::<Vec<_>>(),
+            ))
         }
         IpcRequest::HistorySearch { query, limit } => {
             let history = state.history.lock().await;
             Ok(IpcResponse::ok(
-                history.search(&query).take(limit).cloned().collect::<Vec<_>>(),
+                history
+                    .search(&query)
+                    .take(limit)
+                    .cloned()
+                    .collect::<Vec<_>>(),
             ))
         }
         IpcRequest::HistoryPin { id, pinned } => {
@@ -566,7 +605,12 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
         IpcRequest::Feedback { last } => {
             let feedback = state.feedback.lock().await;
             Ok(IpcResponse::ok(
-                feedback.iter().rev().take(last).cloned().collect::<Vec<_>>(),
+                feedback
+                    .iter()
+                    .rev()
+                    .take(last)
+                    .cloned()
+                    .collect::<Vec<_>>(),
             ))
         }
         IpcRequest::IncomingClipboard { id } => {
@@ -602,16 +646,25 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
             state.engine.apply_settings(updated).await;
             Ok(IpcResponse::ok_empty())
         }
-        IpcRequest::ActivityRecent { limit } => Ok(IpcResponse::ok(state.engine.activity_recent(limit).await)),
-        IpcRequest::ActivitySince { since_id } => Ok(IpcResponse::ok(state.engine.activity_since(since_id).await)),
-        IpcRequest::PendingRemoteClipboards => Ok(IpcResponse::ok(state.engine.pending_remote_clipboards().await)),
+        IpcRequest::ActivityRecent { limit } => {
+            Ok(IpcResponse::ok(state.engine.activity_recent(limit).await))
+        }
+        IpcRequest::ActivitySince { since_id } => {
+            Ok(IpcResponse::ok(state.engine.activity_since(since_id).await))
+        }
+        IpcRequest::PendingRemoteClipboards => Ok(IpcResponse::ok(
+            state.engine.pending_remote_clipboards().await,
+        )),
         IpcRequest::ApplyClipboard { content_hash } => {
             state.engine.apply_clipboard_by_hash(content_hash).await?;
             Ok(IpcResponse::ok_empty())
         }
 
         // Re-push a received clipboard item by hash (Mac "Send" button on feed row).
-        IpcRequest::PushClipboardHash { hash, target_device_id } => {
+        IpcRequest::PushClipboardHash {
+            hash,
+            target_device_id,
+        } => {
             let target = target_device_id
                 .as_deref()
                 .map(parse_uuid)
@@ -638,37 +691,54 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
         // Every non-None field is patched; unset fields are left unchanged.
         // Changes take effect immediately on the running engine — no restart needed.
         IpcRequest::SaveSettings {
-            port, device_name, sync_enabled,
-            sync_text, sync_images, sync_files,
-            history_limit, max_history_text_bytes,
-            max_payload_bytes, clipboard_poll_ms,
-            max_pushes_per_sec, rate_limit_burst,
-            smart_sync_duplicate_window_ms, smart_sync_debounce_ms,
-            block_sensitive_text, require_tofu_confirmation,
-            show_receive_notification, ignore_patterns,
+            port,
+            device_name,
+            sync_enabled,
+            sync_text,
+            sync_images,
+            sync_files,
+            history_limit,
+            max_history_text_bytes,
+            max_payload_bytes,
+            clipboard_poll_ms,
+            max_pushes_per_sec,
+            rate_limit_burst,
+            smart_sync_duplicate_window_ms,
+            smart_sync_debounce_ms,
+            block_sensitive_text,
+            require_tofu_confirmation,
+            show_receive_notification,
+            ignore_patterns,
         } => {
             let mut patch = serde_json::Map::new();
             macro_rules! maybe {
-                ($key:expr, $val:expr) => { if let Some(v) = $val { patch.insert($key.into(), json!(v)); } }
+                ($key:expr, $val:expr) => {
+                    if let Some(v) = $val {
+                        patch.insert($key.into(), json!(v));
+                    }
+                };
             }
-            maybe!("port",                              port);
-            maybe!("device_name",                       device_name);
-            maybe!("sync_enabled",                      sync_enabled);
-            maybe!("sync_text",                         sync_text);
-            maybe!("sync_images",                       sync_images);
-            maybe!("sync_files",                        sync_files);
-            maybe!("history_limit",                     history_limit);
-            maybe!("max_history_text_bytes",            max_history_text_bytes);
-            maybe!("max_payload_bytes",                 max_payload_bytes);
-            maybe!("clipboard_poll_ms",                 clipboard_poll_ms);
-            maybe!("max_pushes_per_sec",                max_pushes_per_sec);
-            maybe!("rate_limit_burst",                  rate_limit_burst);
-            maybe!("smart_sync_duplicate_window_ms",    smart_sync_duplicate_window_ms);
-            maybe!("smart_sync_debounce_ms",            smart_sync_debounce_ms);
-            maybe!("block_sensitive_text",              block_sensitive_text);
-            maybe!("require_tofu_confirmation",         require_tofu_confirmation);
-            maybe!("show_receive_notification",         show_receive_notification);
-            maybe!("ignore_patterns",                   ignore_patterns);
+            maybe!("port", port);
+            maybe!("device_name", device_name);
+            maybe!("sync_enabled", sync_enabled);
+            maybe!("sync_text", sync_text);
+            maybe!("sync_images", sync_images);
+            maybe!("sync_files", sync_files);
+            maybe!("history_limit", history_limit);
+            maybe!("max_history_text_bytes", max_history_text_bytes);
+            maybe!("max_payload_bytes", max_payload_bytes);
+            maybe!("clipboard_poll_ms", clipboard_poll_ms);
+            maybe!("max_pushes_per_sec", max_pushes_per_sec);
+            maybe!("rate_limit_burst", rate_limit_burst);
+            maybe!(
+                "smart_sync_duplicate_window_ms",
+                smart_sync_duplicate_window_ms
+            );
+            maybe!("smart_sync_debounce_ms", smart_sync_debounce_ms);
+            maybe!("block_sensitive_text", block_sensitive_text);
+            maybe!("require_tofu_confirmation", require_tofu_confirmation);
+            maybe!("show_receive_notification", show_receive_notification);
+            maybe!("ignore_patterns", ignore_patterns);
 
             let patch_str = serde_json::to_string(&patch)?;
             let updated = {
@@ -708,7 +778,10 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
                 .await?;
             Ok(IpcResponse::ok_empty())
         }
-        IpcRequest::RejectFileTransfer { transfer_id, reason } => {
+        IpcRequest::RejectFileTransfer {
+            transfer_id,
+            reason,
+        } => {
             state
                 .engine
                 .reject_file_transfer(parse_transfer_id(&transfer_id)?, reason)
@@ -789,11 +862,26 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
 
         // ── Clipboard templates ───────────────────────────────────────────────
         IpcRequest::TemplateList => {
-            let templates = state.settings.lock().await.get().clipboard_templates.clone();
+            let templates = state
+                .settings
+                .lock()
+                .await
+                .get()
+                .clipboard_templates
+                .clone();
             Ok(IpcResponse::ok(templates))
         }
-        IpcRequest::TemplatePush { name, target_device } => {
-            let templates = state.settings.lock().await.get().clipboard_templates.clone();
+        IpcRequest::TemplatePush {
+            name,
+            target_device,
+        } => {
+            let templates = state
+                .settings
+                .lock()
+                .await
+                .get()
+                .clipboard_templates
+                .clone();
             let tmpl = templates
                 .iter()
                 .find(|t| t.name.eq_ignore_ascii_case(&name))
@@ -811,7 +899,11 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
                 state.engine.push_clipboard_to(content, target).await,
             ))
         }
-        IpcRequest::TemplateSet { name, text, description } => {
+        IpcRequest::TemplateSet {
+            name,
+            text,
+            description,
+        } => {
             let mut store = state.settings.lock().await;
             let settings = store.get_mut();
             if let Some(t) = settings
@@ -822,9 +914,11 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
                 t.text = text;
                 t.description = description;
             } else {
-                settings.clipboard_templates.push(
-                    ClipboardTemplate { name, text, description },
-                );
+                settings.clipboard_templates.push(ClipboardTemplate {
+                    name,
+                    text,
+                    description,
+                });
             }
             store.save()?;
             Ok(IpcResponse::ok_empty())
@@ -854,19 +948,12 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
         }
         IpcRequest::PatchPeerSettings { device_id, patch } => {
             let mut store = state.settings.lock().await;
-            let peer = store
-                .get_mut()
-                .per_peer
-                .entry(device_id)
-                .or_default();
+            let peer = store.get_mut().per_peer.entry(device_id).or_default();
             // Apply partial JSON patch to PeerSettings.
-            let mut current =
-                serde_json::to_value(&*peer).context("serialising peer settings")?;
+            let mut current = serde_json::to_value(&*peer).context("serialising peer settings")?;
             let patch_val: serde_json::Value =
                 serde_json::from_str(&patch).context("parsing peer settings patch")?;
-            if let (Some(obj), Some(patch_obj)) =
-                (current.as_object_mut(), patch_val.as_object())
-            {
+            if let (Some(obj), Some(patch_obj)) = (current.as_object_mut(), patch_val.as_object()) {
                 for (k, v) in patch_obj {
                     obj.insert(k.clone(), v.clone());
                 }
@@ -991,12 +1078,16 @@ fn parse_uuid(value: &str) -> Result<Uuid> {
 
 fn decode_base64(value: &str) -> Result<Vec<u8>> {
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD.decode(value).map_err(|error| anyhow!("invalid base64 payload: {error}"))
+    base64::engine::general_purpose::STANDARD
+        .decode(value)
+        .map_err(|error| anyhow!("invalid base64 payload: {error}"))
 }
 
 fn parse_transfer_id(value: &str) -> Result<[u8; 16]> {
     let bytes = hex::decode(value).with_context(|| format!("invalid transfer id: {value}"))?;
-    bytes.try_into().map_err(|_| anyhow!("transfer id must be 16 bytes"))
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("transfer id must be 16 bytes"))
 }
 
 fn now_secs() -> u64 {

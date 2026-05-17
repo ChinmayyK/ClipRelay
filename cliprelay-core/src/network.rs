@@ -49,17 +49,33 @@ const KEEPALIVE_RETRIES: u32 = 3;
 pub async fn connect_with_timeout(addr: SocketAddr) -> Result<TcpStream> {
     let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr))
         .await
-        .with_context(|| format!("TCP connect to {} timed out after {:?}", addr, CONNECT_TIMEOUT))?
+        .with_context(|| {
+            format!(
+                "TCP connect to {} timed out after {:?}",
+                addr, CONNECT_TIMEOUT
+            )
+        })?
         .with_context(|| format!("TCP connect to {} failed", addr))?;
 
-    // Disable Nagle — we want sub-ms latency on LAN. (Fix 3: was missing on
-    // the outbound/initiator path; server accept path already set this.)
-    stream.set_nodelay(true).context("set_nodelay on outbound stream")?;
-
-    // Fix 9: SO_KEEPALIVE — detect dead connections on idle Wi-Fi.
-    apply_keepalive(&stream)?;
+    optimize_stream(&stream, "outbound stream");
 
     Ok(stream)
+}
+
+/// Best-effort socket tuning.
+///
+/// Some Android builds reject `TCP_NODELAY` on accepted or freshly-connected
+/// sockets even though the connection itself is otherwise usable. Treating
+/// that as fatal tears down discovery-driven pairing before the first Hello
+/// frame is exchanged, so we log and continue instead.
+pub fn optimize_stream(stream: &TcpStream, label: &'static str) {
+    if let Err(err) = stream.set_nodelay(true) {
+        debug!(error = %err, %label, "TCP_NODELAY unavailable");
+    }
+
+    if let Err(err) = apply_keepalive(stream) {
+        debug!(error = %err, %label, "TCP keepalive unavailable");
+    }
 }
 
 /// Apply TCP keepalive settings to any TcpStream (client or server).
@@ -322,10 +338,7 @@ impl Server {
     pub async fn accept(&self) -> Result<TcpStream> {
         let (stream, addr) = self.listener.accept().await?;
         debug!("Accepted connection from {}", addr);
-        // Disable Nagle — we want sub-ms latency on LAN.
-        stream.set_nodelay(true)?;
-        // Fix 9: keepalive on accepted connections too.
-        apply_keepalive(&stream)?;
+        optimize_stream(&stream, "accepted stream");
         Ok(stream)
     }
 }
@@ -410,7 +423,10 @@ mod tests {
         // Initiator verification: recover responder_nonce from nonce_response.
         let recovered = xor_nonces(&my_nonce, &nonce_response);
         let recomputed_response = xor_nonces(&my_nonce, &recovered);
-        assert_eq!(recomputed_response, nonce_response, "nonce verification failed");
+        assert_eq!(
+            recomputed_response, nonce_response,
+            "nonce verification failed"
+        );
         assert_ne!(recovered, [0u8; 16], "responder nonce must not be all-zero");
     }
 

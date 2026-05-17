@@ -14,7 +14,7 @@ use crate::protocol::{AppMessage, ClipboardContent, HistoryMetadata, DEFAULT_POR
 use crate::retry::Backoff;
 use crate::settings::{default_peer_store_path, default_trust_store_path, Settings};
 use crate::trust::{format_fingerprint, TrustRecord, TrustState, TrustStore};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
@@ -26,7 +26,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::time::timeout;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 fn now_secs() -> u64 {
@@ -195,6 +195,8 @@ pub struct EngineConfig {
     pub network_poll_interval: Duration,
     /// Root directory for daemon-managed data files (history, feedback, etc.).
     pub data_dir: PathBuf,
+    /// Optional override for dedicated file transfer saves.
+    pub file_save_dir: Option<PathBuf>,
     /// Maximum number of history entries to keep in memory and on disk.
     pub history_limit: Option<usize>,
 }
@@ -218,6 +220,7 @@ impl Default for EngineConfig {
                 .parent()
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from(".")),
+            file_save_dir: None,
             history_limit: Some(500),
         }
     }
@@ -244,7 +247,10 @@ enum ListenerCommand {
 
 #[derive(Debug)]
 enum DiscoveryCommand {
-    Restart { bind_ip: IpAddr, port: u16 },
+    Restart {
+        bind_ip: IpAddr,
+        port: u16,
+    },
     /// Force an immediate re-browse without changing bind address/port.
     /// Used by the Mac "Scan" button and Android NSD retry.
     Rescan,
@@ -335,27 +341,29 @@ impl Engine {
                 config.device_name.clone(),
             ))),
             activity: Arc::new(Mutex::new(ActivityFeed::new(200))),
-            file_transfers: Arc::new(Mutex::new(FileTransferManager::new(default_save_dir()))),
+            file_transfers: Arc::new(Mutex::new(FileTransferManager::new(
+                config
+                    .file_save_dir
+                    .clone()
+                    .unwrap_or_else(default_save_dir),
+            ))),
             apply_policy: Arc::new(Mutex::new(ClipboardApplyPolicy::default())),
             settings: Arc::new(Mutex::new(Settings::default())),
             quality_probes: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            clipboard_store: Arc::new(Mutex::new(
-                crate::engine_support::ClipboardStore::default(),
-            )),
-            local_clipboard: Arc::new(Mutex::new(
-                crate::engine_support::LocalClipboard::new(),
-            )),
+            clipboard_store: Arc::new(Mutex::new(crate::engine_support::ClipboardStore::default())),
+            local_clipboard: Arc::new(Mutex::new(crate::engine_support::LocalClipboard::new())),
             history: Arc::new(Mutex::new({
                 let history_path = config.data_dir.join("history.json");
                 let limit = config.history_limit.unwrap_or(500);
-                crate::history::History::load_with_limit(&history_path, limit)
-                    .unwrap_or_else(|_| {
+                crate::history::History::load_with_limit(&history_path, limit).unwrap_or_else(
+                    |_| {
                         // If the history file is missing or corrupt, start fresh
                         // in a temp path so the daemon always starts successfully.
                         let tmp = std::env::temp_dir().join("cliprelay_history_fallback.json");
                         crate::history::History::load_with_limit(&tmp, limit)
                             .expect("cannot create fallback history store")
-                    })
+                    },
+                )
             })),
             feedback: Arc::new(Mutex::new(crate::engine_support::FeedbackLog::new(200))),
         };
@@ -432,7 +440,10 @@ impl Engine {
 
         // Record text in clipboard_store for future repush by hash.
         if let ClipboardContent::Text(ref text) = content {
-            self.shared.clipboard_store.lock().await
+            self.shared
+                .clipboard_store
+                .lock()
+                .await
                 .insert(hex::encode(hash), text.clone());
         }
 
@@ -666,8 +677,8 @@ impl Engine {
     /// Apply a JSON merge-patch to the current settings.
     pub async fn patch_settings(&self, patch: String) -> Result<()> {
         let mut current = serde_json::to_value(&*self.shared.settings.lock().await)?;
-        let patch_val: serde_json::Value = serde_json::from_str(&patch)
-            .context("patch_settings: invalid JSON patch")?;
+        let patch_val: serde_json::Value =
+            serde_json::from_str(&patch).context("patch_settings: invalid JSON patch")?;
         json_merge_patch(&mut current, &patch_val);
         let new_settings: Settings = serde_json::from_value(current)
             .context("patch_settings: patched value is invalid Settings")?;
@@ -679,24 +690,60 @@ impl Engine {
     pub async fn save_settings_partial(&self, p: crate::ipc::PartialSettings) -> Result<()> {
         // Clone first so we're not holding the lock while calling apply_settings.
         let mut s = self.shared.settings.lock().await.clone();
-        if let Some(v) = p.port                           { s.port = v; }
-        if let Some(v) = p.device_name                    { s.device_name = v; }
-        if let Some(v) = p.sync_enabled                   { s.sync_enabled = v; }
-        if let Some(v) = p.sync_text                      { s.sync_text = v; }
-        if let Some(v) = p.sync_images                    { s.sync_images = v; }
-        if let Some(v) = p.sync_files                     { s.sync_files = v; }
-        if let Some(v) = p.history_limit                  { s.history_limit = v; }
-        if let Some(v) = p.max_history_text_bytes         { s.max_history_text_bytes = v; }
-        if let Some(v) = p.max_payload_bytes              { s.max_payload_bytes = v; }
-        if let Some(v) = p.clipboard_poll_ms              { s.clipboard_poll_ms = v; }
-        if let Some(v) = p.max_pushes_per_sec             { s.max_pushes_per_sec = v; }
-        if let Some(v) = p.rate_limit_burst               { s.rate_limit_burst = v; }
-        if let Some(v) = p.smart_sync_duplicate_window_ms { s.smart_sync_duplicate_window_ms = v; }
-        if let Some(v) = p.smart_sync_debounce_ms         { s.smart_sync_debounce_ms = v; }
-        if let Some(v) = p.block_sensitive_text           { s.block_sensitive_text = v; }
-        if let Some(v) = p.require_tofu_confirmation      { s.require_tofu_confirmation = v; }
-        if let Some(v) = p.show_receive_notification      { s.show_receive_notification = v; }
-        if let Some(v) = p.ignore_patterns                { s.ignore_patterns = v; }
+        if let Some(v) = p.port {
+            s.port = v;
+        }
+        if let Some(v) = p.device_name {
+            s.device_name = v;
+        }
+        if let Some(v) = p.sync_enabled {
+            s.sync_enabled = v;
+        }
+        if let Some(v) = p.sync_text {
+            s.sync_text = v;
+        }
+        if let Some(v) = p.sync_images {
+            s.sync_images = v;
+        }
+        if let Some(v) = p.sync_files {
+            s.sync_files = v;
+        }
+        if let Some(v) = p.history_limit {
+            s.history_limit = v;
+        }
+        if let Some(v) = p.max_history_text_bytes {
+            s.max_history_text_bytes = v;
+        }
+        if let Some(v) = p.max_payload_bytes {
+            s.max_payload_bytes = v;
+        }
+        if let Some(v) = p.clipboard_poll_ms {
+            s.clipboard_poll_ms = v;
+        }
+        if let Some(v) = p.max_pushes_per_sec {
+            s.max_pushes_per_sec = v;
+        }
+        if let Some(v) = p.rate_limit_burst {
+            s.rate_limit_burst = v;
+        }
+        if let Some(v) = p.smart_sync_duplicate_window_ms {
+            s.smart_sync_duplicate_window_ms = v;
+        }
+        if let Some(v) = p.smart_sync_debounce_ms {
+            s.smart_sync_debounce_ms = v;
+        }
+        if let Some(v) = p.block_sensitive_text {
+            s.block_sensitive_text = v;
+        }
+        if let Some(v) = p.require_tofu_confirmation {
+            s.require_tofu_confirmation = v;
+        }
+        if let Some(v) = p.show_receive_notification {
+            s.show_receive_notification = v;
+        }
+        if let Some(v) = p.ignore_patterns {
+            s.ignore_patterns = v;
+        }
         self.apply_settings(s).await;
         Ok(())
     }
@@ -706,37 +753,70 @@ impl Engine {
     }
 
     pub async fn set_timeline_first_mode(&self, enabled: bool) {
-        self.shared.apply_policy.lock().await.set_timeline_first(enabled);
+        self.shared
+            .apply_policy
+            .lock()
+            .await
+            .set_timeline_first(enabled);
     }
 
     pub async fn set_auto_apply_clipboard(&self, enabled: bool) {
-        self.shared.apply_policy.lock().await.set_auto_apply(enabled);
+        self.shared
+            .apply_policy
+            .lock()
+            .await
+            .set_auto_apply(enabled);
     }
 
     // ── History ───────────────────────────────────────────────────────────────
 
     pub async fn history_recent(&self, n: usize) -> Vec<crate::history::HistoryEntry> {
-        self.shared.history.lock().await.recent(n).cloned().collect()
+        self.shared
+            .history
+            .lock()
+            .await
+            .recent(n)
+            .cloned()
+            .collect()
     }
 
-    pub async fn history_search(&self, query: String, limit: usize) -> Vec<crate::history::HistoryEntry> {
-        self.shared.history.lock().await
-            .search_fulltext(&query).take(limit).cloned().collect()
+    pub async fn history_search(
+        &self,
+        query: String,
+        limit: usize,
+    ) -> Vec<crate::history::HistoryEntry> {
+        self.shared
+            .history
+            .lock()
+            .await
+            .search_fulltext(&query)
+            .take(limit)
+            .cloned()
+            .collect()
     }
 
     pub async fn history_repush(&self, id: u64, target: SyncTarget) -> Result<()> {
-        let entry = self.shared.history.lock().await.get(id).cloned()
+        let entry = self
+            .shared
+            .history
+            .lock()
+            .await
+            .get(id)
+            .cloned()
             .context("history entry not found")?;
-        if let crate::history::HistoryPayload::Text { full_text, preview, .. } = entry.payload {
+        if let crate::history::HistoryPayload::Text {
+            full_text, preview, ..
+        } = entry.payload
+        {
             let text = full_text.unwrap_or(preview);
-            self.push_clipboard_to(ClipboardContent::Text(text), target).await;
+            self.push_clipboard_to(ClipboardContent::Text(text), target)
+                .await;
         }
         Ok(())
     }
 
     pub async fn history_set_pinned(&self, id: u64, pinned: bool) -> Result<()> {
-        self.shared.history.lock().await
-            .set_pinned(id, pinned)?;
+        self.shared.history.lock().await.set_pinned(id, pinned)?;
         Ok(())
     }
 
@@ -789,8 +869,14 @@ impl Engine {
             limit: Some(limit),
             pinned_only,
         };
-        self.shared.history.lock().await
-            .filter(&filter).take(limit).cloned().collect()
+        self.shared
+            .history
+            .lock()
+            .await
+            .filter(&filter)
+            .take(limit)
+            .cloned()
+            .collect()
     }
 
     /// Record a local text entry in history without syncing it to peers.
@@ -798,19 +884,27 @@ impl Engine {
         let device_name = self.shared.config.device_name.clone();
         let max_bytes = self.shared.settings.lock().await.max_history_text_bytes;
         let content = crate::protocol::ClipboardContent::Text(text);
-        self.shared.history.lock().await
+        self.shared
+            .history
+            .lock()
+            .await
             .push_with_options(&content, device_name, max_bytes)?;
         Ok(())
     }
 
     /// Return the raw clipboard content for a pending incoming item by ID.
     pub async fn incoming_clipboard(&self, id: u64) -> Option<serde_json::Value> {
-        let entries: Vec<_> = self.shared.activity.lock().await
+        let entries: Vec<_> = self
+            .shared
+            .activity
+            .lock()
+            .await
             .pending_remote_clipboards()
             .into_iter()
             .cloned()
             .collect();
-        entries.iter()
+        entries
+            .iter()
             .find(|e| e.id == id)
             .map(|e| serde_json::to_value(e).ok())
             .flatten()
@@ -819,33 +913,62 @@ impl Engine {
     // ── Templates ─────────────────────────────────────────────────────────────
 
     pub async fn template_list(&self) -> Vec<crate::settings::ClipboardTemplate> {
-        self.shared.settings.lock().await.clipboard_templates.clone()
+        self.shared
+            .settings
+            .lock()
+            .await
+            .clipboard_templates
+            .clone()
     }
 
     pub async fn template_push(&self, name: String, target: SyncTarget) -> Result<()> {
-        let templates = self.shared.settings.lock().await.clipboard_templates.clone();
-        let tmpl = templates.iter().find(|t| t.name == name)
+        let templates = self
+            .shared
+            .settings
+            .lock()
+            .await
+            .clipboard_templates
+            .clone();
+        let tmpl = templates
+            .iter()
+            .find(|t| t.name == name)
             .cloned()
             .with_context(|| format!("template '{}' not found", name))?;
         let content = crate::protocol::ClipboardContent::Text(tmpl.text);
         match target {
-            SyncTarget::All => { self.push_clipboard(content).await; }
-            SyncTarget::Device(id) => { self.push_clipboard_to(content, SyncTarget::Device(id)).await; }
+            SyncTarget::All => {
+                self.push_clipboard(content).await;
+            }
+            SyncTarget::Device(id) => {
+                self.push_clipboard_to(content, SyncTarget::Device(id))
+                    .await;
+            }
         }
         Ok(())
     }
 
-    pub async fn template_set(&self, name: String, text: String, description: String) -> Result<()> {
+    pub async fn template_set(
+        &self,
+        name: String,
+        text: String,
+        description: String,
+    ) -> Result<()> {
         let mut settings = self.shared.settings.lock().await;
-        if let Some(t) = settings.clipboard_templates.iter_mut().find(|t| t.name == name) {
+        if let Some(t) = settings
+            .clipboard_templates
+            .iter_mut()
+            .find(|t| t.name == name)
+        {
             t.text = text;
             t.description = description;
         } else {
-            settings.clipboard_templates.push(crate::settings::ClipboardTemplate {
-                name,
-                text,
-                description,
-            });
+            settings
+                .clipboard_templates
+                .push(crate::settings::ClipboardTemplate {
+                    name,
+                    text,
+                    description,
+                });
         }
         Ok(())
     }
@@ -859,9 +982,17 @@ impl Engine {
 
     // ── Per-peer settings ─────────────────────────────────────────────────────
 
-    pub async fn get_peer_settings(&self, device_id: Uuid) -> Option<crate::settings::PeerSettings> {
-        self.shared.settings.lock().await
-            .per_peer.get(&device_id.to_string()).cloned()
+    pub async fn get_peer_settings(
+        &self,
+        device_id: Uuid,
+    ) -> Option<crate::settings::PeerSettings> {
+        self.shared
+            .settings
+            .lock()
+            .await
+            .per_peer
+            .get(&device_id.to_string())
+            .cloned()
     }
 
     pub async fn patch_peer_settings(&self, device_id: Uuid, patch: String) -> Result<()> {
@@ -869,8 +1000,8 @@ impl Engine {
         let key = device_id.to_string();
         let existing = settings.per_peer.entry(key).or_default();
         let mut val = serde_json::to_value(&*existing)?;
-        let patch_val: serde_json::Value = serde_json::from_str(&patch)
-            .context("patch_peer_settings: invalid JSON patch")?;
+        let patch_val: serde_json::Value =
+            serde_json::from_str(&patch).context("patch_peer_settings: invalid JSON patch")?;
         json_merge_patch(&mut val, &patch_val);
         *existing = serde_json::from_value(val)
             .context("patch_peer_settings: patched value is invalid PeerSettings")?;
@@ -890,8 +1021,6 @@ impl Engine {
         self.shared.feedback.lock().await.recent(n)
     }
 
-
-
     /// Send a file to a specific peer (or all if `target_device` is None).
     pub async fn send_file(
         &self,
@@ -910,16 +1039,36 @@ impl Engine {
         // Announce to target peer(s).
         let announce = AppMessage::FileTransferAnnounce { meta };
         let peers = self.shared.peer_manager.active_senders();
+        let mut announced_to = 0usize;
         for (peer_id, tx) in peers {
             let should_send = match target_device {
                 Some(t) => t == peer_id,
                 None => true,
             };
             if should_send {
-                let _ = tx.try_send(announce.clone());
+                let msg = announce.clone();
+                let send_result = match tx.try_send(msg.clone()) {
+                    Ok(()) => Ok(()),
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => tx.send(msg).await,
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        Err(tokio::sync::mpsc::error::SendError(msg))
+                    }
+                };
+                if send_result.is_ok() {
+                    announced_to += 1;
+                } else {
+                    warn!(
+                        "file transfer announce queue unavailable for peer {}",
+                        peer_id
+                    );
+                }
             }
         }
         drop(mgr);
+
+        if announced_to == 0 {
+            return Err(anyhow!("target peer queue unavailable"));
+        }
 
         // Record in activity feed.
         {
@@ -1038,7 +1187,8 @@ impl Engine {
             .await
             .get_text_by_hash(&hash)
             .context("clipboard item not found by hash")?;
-        self.push_clipboard_to(ClipboardContent::Text(text), target).await;
+        self.push_clipboard_to(ClipboardContent::Text(text), target)
+            .await;
         Ok(())
     }
 
@@ -1053,7 +1203,8 @@ impl Engine {
             .read_text()
             .context("reading local clipboard")?;
         if let Some(text) = text {
-            self.push_clipboard_to(ClipboardContent::Text(text), target).await;
+            self.push_clipboard_to(ClipboardContent::Text(text), target)
+                .await;
         }
         Ok(())
     }
@@ -1067,7 +1218,8 @@ impl Engine {
     /// Returns this device's Noise public-key fingerprint as a lowercase hex string.
     /// Displayed in the Mac Security pane and Android pairing screen for manual verification.
     pub fn local_fingerprint(&self) -> String {
-        self.shared.identity_pubkey
+        self.shared
+            .identity_pubkey
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<Vec<_>>()
@@ -1079,17 +1231,20 @@ impl Engine {
     pub async fn apply_sync_settings(
         &self,
         sync_enabled: bool,
-        sync_text:    bool,
-        sync_images:  bool,
-        sync_files:   bool,
+        sync_text: bool,
+        sync_images: bool,
+        sync_files: bool,
     ) {
         let mut settings = self.shared.settings.lock().await;
         settings.sync_enabled = sync_enabled;
-        settings.sync_text    = sync_text;
-        settings.sync_images  = sync_images;
-        settings.sync_files   = sync_files;
+        settings.sync_text = sync_text;
+        settings.sync_images = sync_images;
+        settings.sync_files = sync_files;
         tracing::info!(
-            sync_enabled, sync_text, sync_images, sync_files,
+            sync_enabled,
+            sync_text,
+            sync_images,
+            sync_files,
             "sync settings updated live"
         );
     }
@@ -1097,7 +1252,13 @@ impl Engine {
     pub async fn connect_to_peer(&self, ip: String, port: u16) -> Result<()> {
         let addr = SocketAddr::new(ip.parse().context("invalid peer IP")?, port);
         self.shared.peer_manager.note_manual_target(addr);
-        connect_loop(self.shared.clone(), addr, None, DiscoverySource::Manual).await
+        let shared = self.shared.clone();
+        tokio::spawn(async move {
+            if let Err(err) = connect_loop(shared, addr, None, DiscoverySource::Manual).await {
+                warn!(%addr, error = %err, "manual peer connection failed");
+            }
+        });
+        Ok(())
     }
 
     pub async fn disconnect_peer(&self, device_id: Uuid) -> Result<bool> {
@@ -1639,7 +1800,7 @@ async fn on_peer_found(shared: EngineShared, peer: PeerInfo) -> Result<()> {
 }
 
 async fn handle_incoming(shared: EngineShared, mut stream: TcpStream) -> Result<()> {
-    stream.set_nodelay(true)?;
+    network::optimize_stream(&stream, "incoming engine stream");
     let hs = network::handshake_responder(
         &mut stream,
         shared.config.device_id,
@@ -1737,7 +1898,7 @@ async fn connect_once(
         .await
         .context("connect timeout")?
         .with_context(|| format!("connecting to {endpoint}"))?;
-    stream.set_nodelay(true)?;
+    network::optimize_stream(&stream, "outgoing engine stream");
 
     let hs = network::handshake_initiator(
         &mut stream,

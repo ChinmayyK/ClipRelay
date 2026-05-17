@@ -567,7 +567,11 @@ impl History {
                 return true;
             }
             // Also check the stored full text for text entries.
-            if let HistoryPayload::Text { full_text: Some(ref text), .. } = entry.payload {
+            if let HistoryPayload::Text {
+                full_text: Some(ref text),
+                ..
+            } = entry.payload
+            {
                 if text.to_lowercase().contains(&q) {
                     return true;
                 }
@@ -811,7 +815,11 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
         history
-            .push_with_options(&ClipboardContent::Text("tagged item".into()), "dev".into(), 1024)
+            .push_with_options(
+                &ClipboardContent::Text("tagged item".into()),
+                "dev".into(),
+                1024,
+            )
             .unwrap();
         let id = history.entries().back().unwrap().id;
 
@@ -848,14 +856,25 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
         history
-            .push_with_options(&ClipboardContent::Text("hello".into()), "iPhone".into(), 1024)
-            .unwrap();
-        history
-            .push_with_options(&ClipboardContent::Text("world".into()), "MacBook".into(), 1024)
+            .push_with_options(
+                &ClipboardContent::Text("hello".into()),
+                "iPhone".into(),
+                1024,
+            )
             .unwrap();
         history
             .push_with_options(
-                &ClipboardContent::Image { mime: "image/png".into(), data: vec![0u8; 512] },
+                &ClipboardContent::Text("world".into()),
+                "MacBook".into(),
+                1024,
+            )
+            .unwrap();
+        history
+            .push_with_options(
+                &ClipboardContent::Image {
+                    mime: "image/png".into(),
+                    data: vec![0u8; 512],
+                },
                 "iPhone".into(),
                 1024,
             )
@@ -879,17 +898,27 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
         history
-            .push_with_options(&ClipboardContent::Text("text item".into()), "dev".into(), 1024)
+            .push_with_options(
+                &ClipboardContent::Text("text item".into()),
+                "dev".into(),
+                1024,
+            )
             .unwrap();
         history
             .push_with_options(
-                &ClipboardContent::Image { mime: "image/png".into(), data: vec![1, 2, 3] },
+                &ClipboardContent::Image {
+                    mime: "image/png".into(),
+                    data: vec![1, 2, 3],
+                },
                 "dev".into(),
                 1024,
             )
             .unwrap();
 
-        let q = HistoryFilter { kind: Some("text".into()), ..Default::default() };
+        let q = HistoryFilter {
+            kind: Some("text".into()),
+            ..Default::default()
+        };
         let results: Vec<_> = history.filter(&q).collect();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].kind(), "text");
@@ -906,7 +935,10 @@ mod tests {
             .push_with_options(&ClipboardContent::Text("b".into()), "MacBook".into(), 1024)
             .unwrap();
 
-        let q = HistoryFilter { device: Some("iphone".into()), ..Default::default() };
+        let q = HistoryFilter {
+            device: Some("iphone".into()),
+            ..Default::default()
+        };
         let results: Vec<_> = history.filter(&q).collect();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].source_device, "iPhone");
@@ -928,7 +960,10 @@ mod tests {
         let id = history.entries().front().unwrap().id;
         history.set_pinned(id, true).unwrap();
 
-        let q = HistoryFilter { pinned_only: true, ..Default::default() };
+        let q = HistoryFilter {
+            pinned_only: true,
+            ..Default::default()
+        };
         let results: Vec<_> = history.filter(&q).collect();
         assert_eq!(results.len(), 1);
         assert!(results[0].pinned);
@@ -942,12 +977,19 @@ mod tests {
             .push_with_options(&ClipboardContent::Text("tagged".into()), "dev".into(), 1024)
             .unwrap();
         history
-            .push_with_options(&ClipboardContent::Text("untagged".into()), "dev".into(), 1024)
+            .push_with_options(
+                &ClipboardContent::Text("untagged".into()),
+                "dev".into(),
+                1024,
+            )
             .unwrap();
         let tagged_id = history.entries().front().unwrap().id;
         history.add_tag(tagged_id, "important").unwrap();
 
-        let q = HistoryFilter { tag: Some("important".into()), ..Default::default() };
+        let q = HistoryFilter {
+            tag: Some("important".into()),
+            ..Default::default()
+        };
         let results: Vec<_> = history.filter(&q).collect();
         assert_eq!(results.len(), 1);
         assert!(results[0].tags.contains(&"important".to_string()));
@@ -966,7 +1008,10 @@ mod tests {
                 )
                 .unwrap();
         }
-        let q = HistoryFilter { limit: Some(3), ..Default::default() };
+        let q = HistoryFilter {
+            limit: Some(3),
+            ..Default::default()
+        };
         let results: Vec<_> = history.filter(&q).collect();
         assert_eq!(results.len(), 3);
     }
@@ -976,7 +1021,11 @@ mod tests {
         let tmp = NamedTempFile::new().unwrap();
         let mut history = History::load_with_limit(tmp.path(), 50).unwrap();
         history
-            .push_with_options(&ClipboardContent::Text("json test".into()), "dev".into(), 1024)
+            .push_with_options(
+                &ClipboardContent::Text("json test".into()),
+                "dev".into(),
+                1024,
+            )
             .unwrap();
 
         let json_str = history.export_json().unwrap();

@@ -82,7 +82,7 @@ mod platform {
             // Fix 6: was hard-coded to "1"; now dynamically reflects PROTOCOL_VERSION.
             properties.insert("v".to_string(), PROTOCOL_VERSION.to_string());
 
-            let instance_name = format!("cliprelay-{}", &self.my_device_id.to_string()[..8]);
+            let instance_name = service_instance_name(device_name, self.my_device_id);
 
             let service = ServiceInfo::new(
                 MDNS_SERVICE_TYPE,
@@ -119,9 +119,8 @@ mod platform {
                                 // Fix 6: Validate protocol version before connecting.
                                 // Incompatible peers are skipped at mDNS time instead of
                                 // failing expensively at the TCP handshake layer.
-                                let peer_version: Option<u16> = info
-                                    .get_property_val_str("v")
-                                    .and_then(|s| s.parse().ok());
+                                let peer_version: Option<u16> =
+                                    info.get_property_val_str("v").and_then(|s| s.parse().ok());
 
                                 match peer_version {
                                     Some(v) if v == PROTOCOL_VERSION => {} // OK, proceed
@@ -159,13 +158,11 @@ mod platform {
                                     continue;
                                 }
 
-                                // TRU-06: device names are no longer broadcast in TXT records.
-                                // Use the first 8 chars of the UUID as a placeholder; the real
-                                // name is learned from the encrypted HelloFrame after handshake.
-                                let device_name = format!(
-                                    "device-{}",
-                                    &peer_id.to_string()[..8]
-                                );
+                                // Use the service instance name as a provisional display name
+                                // when it contains a sanitized device label. The encrypted
+                                // handshake still upgrades this to the canonical friendly name.
+                                let device_name =
+                                    provisional_device_name(info.get_fullname(), peer_id);
 
                                 // Fix 7: Prefer IPv4 over IPv6 link-local.
                                 // Old code: `info.get_addresses().iter().next()` — arbitrary
@@ -274,6 +271,50 @@ mod platform {
             .unwrap_or_else(|| "cliprelay-host".to_string())
     }
 
+    fn service_instance_name(device_name: &str, device_id: Uuid) -> String {
+        let prefix = &device_id.to_string()[..8];
+        let safe = sanitize_service_label(device_name);
+        if safe.is_empty() {
+            format!("cliprelay-{prefix}")
+        } else {
+            format!("cliprelay-{prefix}-{safe}")
+        }
+    }
+
+    fn provisional_device_name(fullname: &str, peer_id: Uuid) -> String {
+        let instance = fullname
+            .split("._cliprelay._tcp.local.")
+            .next()
+            .unwrap_or(fullname);
+        let prefix = format!("cliprelay-{}", &peer_id.to_string()[..8]);
+
+        let Some(raw_name) = instance.strip_prefix(&format!("{prefix}-")) else {
+            return format!("device-{}", &peer_id.to_string()[..8]);
+        };
+
+        let humanized = raw_name
+            .split('-')
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if humanized.is_empty() {
+            format!("device-{}", &peer_id.to_string()[..8])
+        } else {
+            humanized
+        }
+    }
+
+    fn sanitize_service_label(value: &str) -> String {
+        value
+            .chars()
+            .take(24)
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })
+            .collect::<String>()
+            .trim_matches('-')
+            .to_string()
+    }
+
     #[cfg(test)]
     mod tests {
         use super::*;
@@ -325,15 +366,19 @@ mod platform {
                 Some(our_version)
             );
             // Old version should be filtered out.
-            assert_eq!(
-                Some(old_version).filter(|&v| v == PROTOCOL_VERSION),
-                None
-            );
+            assert_eq!(Some(old_version).filter(|&v| v == PROTOCOL_VERSION), None);
             // Future version should also be filtered out.
-            assert_eq!(
-                Some(new_version).filter(|&v| v == PROTOCOL_VERSION),
-                None
+            assert_eq!(Some(new_version).filter(|&v| v == PROTOCOL_VERSION), None);
+        }
+
+        #[test]
+        fn provisional_name_uses_service_label_when_present() {
+            let id = Uuid::parse_str("12345678-1234-5678-1234-567812345678").unwrap();
+            let name = provisional_device_name(
+                "cliprelay-12345678-Pixel-8-Pro._cliprelay._tcp.local.",
+                id,
             );
+            assert_eq!(name, "Pixel 8 Pro");
         }
     }
 }

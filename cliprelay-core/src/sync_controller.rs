@@ -32,7 +32,11 @@ impl SyncStats {
     /// Fraction of evaluated items that were allowed (0.0–1.0).
     pub fn allow_rate(&self) -> f64 {
         let total = self.allowed + self.total_skipped();
-        if total == 0 { 1.0 } else { self.allowed as f64 / total as f64 }
+        if total == 0 {
+            1.0
+        } else {
+            self.allowed as f64 / total as f64
+        }
     }
 }
 

@@ -617,9 +617,9 @@ impl PeerManager {
         let pruned = {
             let mut store = self.store.write().unwrap_or_else(|p| p.into_inner());
             let before = store.peers.len();
-            store.peers.retain(|id, record| {
-                live_ids.contains(id) || record.remembered || record.trusted
-            });
+            store
+                .peers
+                .retain(|id, record| live_ids.contains(id) || record.remembered || record.trusted);
             before - store.peers.len()
         };
         if pruned > 0 {
@@ -790,10 +790,16 @@ mod tests {
 
         for (id, name, ip) in [
             (id_a, "Alpha", [192, 168, 1, 10u8]),
-            (id_b, "Beta",  [192, 168, 1, 11]),
+            (id_b, "Beta", [192, 168, 1, 11]),
         ] {
             manager
-                .upsert_peer(id, name.into(), SocketAddr::from((ip, 47823)), true, DiscoverySource::Mdns)
+                .upsert_peer(
+                    id,
+                    name.into(),
+                    SocketAddr::from((ip, 47823)),
+                    true,
+                    DiscoverySource::Mdns,
+                )
                 .unwrap();
         }
 
@@ -813,29 +819,47 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         let manager = PeerManager::load(file.path()).unwrap();
 
-        let id_trusted   = Uuid::new_v4();
+        let id_trusted = Uuid::new_v4();
         let id_untrusted = Uuid::new_v4();
-        let id_nosync    = Uuid::new_v4();
+        let id_nosync = Uuid::new_v4();
 
         // Trusted + sync enabled.
         manager
-            .upsert_peer(id_trusted, "Trusted".into(), SocketAddr::from(([10, 0, 0, 1], 47823)), true, DiscoverySource::Mdns)
+            .upsert_peer(
+                id_trusted,
+                "Trusted".into(),
+                SocketAddr::from(([10, 0, 0, 1], 47823)),
+                true,
+                DiscoverySource::Mdns,
+            )
             .unwrap();
         // Untrusted.
         manager
-            .upsert_peer(id_untrusted, "Stranger".into(), SocketAddr::from(([10, 0, 0, 2], 47823)), false, DiscoverySource::Mdns)
+            .upsert_peer(
+                id_untrusted,
+                "Stranger".into(),
+                SocketAddr::from(([10, 0, 0, 2], 47823)),
+                false,
+                DiscoverySource::Mdns,
+            )
             .unwrap();
         // Trusted but sync disabled.
         manager
-            .upsert_peer(id_nosync, "NoSync".into(), SocketAddr::from(([10, 0, 0, 3], 47823)), true, DiscoverySource::Mdns)
+            .upsert_peer(
+                id_nosync,
+                "NoSync".into(),
+                SocketAddr::from(([10, 0, 0, 3], 47823)),
+                true,
+                DiscoverySource::Mdns,
+            )
             .unwrap();
         manager.set_sync_enabled(id_nosync, false).unwrap();
 
         // Give all three a live session.
         for (id, ip) in [
-            (id_trusted,   [10, 0, 0, 1u8]),
+            (id_trusted, [10, 0, 0, 1u8]),
             (id_untrusted, [10, 0, 0, 2]),
-            (id_nosync,    [10, 0, 0, 3]),
+            (id_nosync, [10, 0, 0, 3]),
         ] {
             let (tx, _rx) = mpsc::channel(1);
             let (stop, _) = oneshot::channel();

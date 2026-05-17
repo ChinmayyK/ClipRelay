@@ -183,7 +183,13 @@ mod tests {
 
     #[test]
     fn backoff_doubles() {
-        let mut b = Backoff::with_config("test", RetryConfig { jitter: 0.0, ..RetryConfig::default() });
+        let mut b = Backoff::with_config(
+            "test",
+            RetryConfig {
+                jitter: 0.0,
+                ..RetryConfig::default()
+            },
+        );
         let d0 = b.next().unwrap();
         let d1 = b.next().unwrap();
         // Second delay must be exactly 2× the first (no jitter).

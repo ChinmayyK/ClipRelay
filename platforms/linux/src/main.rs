@@ -38,7 +38,11 @@ fn suppress_next() {
 fn should_suppress() -> bool {
     SUPPRESS_COUNT
         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
-            if v > 0 { Some(v - 1) } else { None }
+            if v > 0 {
+                Some(v - 1)
+            } else {
+                None
+            }
         })
         .is_ok()
 }
@@ -77,7 +81,10 @@ fn main() {
             // We reuse the same handler used by the standalone daemon binary.
             let result = cliprelay_core::ipc::server::spawn_with_engine(engine_ipc).await;
             match result {
-                Ok(()) => tracing::info!("IPC server listening at {:?}", cliprelay_core::ipc::socket_path()),
+                Ok(()) => tracing::info!(
+                    "IPC server listening at {:?}",
+                    cliprelay_core::ipc::socket_path()
+                ),
                 Err(err) => tracing::warn!("IPC server failed to start: {err:#}"),
             }
         });
@@ -92,7 +99,10 @@ fn main() {
             .spawn(move || {
                 let mut cb = match arboard::Clipboard::new() {
                     Ok(c) => c,
-                    Err(e) => { tracing::error!("clipboard init: {e}"); return; }
+                    Err(e) => {
+                        tracing::error!("clipboard init: {e}");
+                        return;
+                    }
                 };
 
                 let mut last_hash: u64 = 0;
@@ -123,8 +133,7 @@ fn main() {
                                 last_hash = hash;
                                 idle_streak = 0;
                                 rt_clip.block_on(
-                                    engine_clip
-                                        .push_clipboard(ClipboardContent::Text(text)),
+                                    engine_clip.push_clipboard(ClipboardContent::Text(text)),
                                 );
                             } else {
                                 idle_streak = idle_streak.saturating_add(1);
@@ -140,7 +149,7 @@ fn main() {
     // ── Event drain ───────────────────────────────────────────────────────────
     let engine_ev = engine.clone();
     rt.block_on(async move {
-        let mut rx   = event_rx;
+        let mut rx = event_rx;
         let mut last = Instant::now() - Duration::from_secs(10);
 
         loop {
@@ -159,11 +168,7 @@ fn main() {
 
 // ── Event handler ─────────────────────────────────────────────────────────────
 
-async fn handle_event(
-    event: EngineEvent,
-    engine: &Arc<Engine>,
-    last_notify: &mut Instant,
-) {
+async fn handle_event(event: EngineEvent, engine: &Arc<Engine>, last_notify: &mut Instant) {
     match event {
         EngineEvent::ClipboardReceived {
             from_name,
@@ -199,7 +204,9 @@ async fn handle_event(
             tracing::debug!("✅ synced to {}", peer_name);
         }
 
-        EngineEvent::ClipboardSyncFailed { peer_name, reason, .. } => {
+        EngineEvent::ClipboardSyncFailed {
+            peer_name, reason, ..
+        } => {
             tracing::warn!("sync to '{}' failed: {}", peer_name, reason);
         }
 
@@ -275,14 +282,14 @@ pub fn apply_clipboard_content(content: &ClipboardContent) -> anyhow::Result<()>
             if !mime.starts_with("image/") {
                 anyhow::bail!("unsupported image mime type: {mime}");
             }
-            let img   = image::load_from_memory(data)?;
-            let rgba  = img.into_rgba8();
+            let img = image::load_from_memory(data)?;
+            let rgba = img.into_rgba8();
             let (w, h) = rgba.dimensions();
             let mut cb = arboard::Clipboard::new()?;
             cb.set_image(arboard::ImageData {
-                width:  w as usize,
+                width: w as usize,
                 height: h as usize,
-                bytes:  std::borrow::Cow::Owned(rgba.into_raw()),
+                bytes: std::borrow::Cow::Owned(rgba.into_raw()),
             })?;
             Ok(())
         }

@@ -419,7 +419,7 @@ private struct SecurityPane: View {
     @ObservedObject var store: ClipRelayStore
 
     var body: some View {
-        PrefsSection(title: "Trust", icon: "shield.checkered", tint: CRTheme.accentGreen) {
+        PrefsSection(title: "Trust", icon: "checkmark.shield", tint: CRTheme.accentGreen) {
             PrefsRow(icon: "person.badge.clock.fill", label: "Require trust confirmation",
                      description: "Show a prompt for every new device before allowing sync (TOFU model).") {
                 Toggle("", isOn: $copy.requireTofuConfirmation).labelsHidden()

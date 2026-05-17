@@ -185,8 +185,15 @@ impl FeedbackLog {
 
     /// Return the most-recent `n` events, newest-last.
     pub fn recent(&self, n: usize) -> Vec<FeedbackEvent> {
-        self.events.iter().rev().take(n).cloned().collect::<Vec<_>>()
-            .into_iter().rev().collect()
+        self.events
+            .iter()
+            .rev()
+            .take(n)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
     }
 }
 
