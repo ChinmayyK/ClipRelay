@@ -193,4 +193,5 @@ struct IncomingCallState: Equatable {
     }
 
     var isRinging: Bool { state.lowercased() == "ringing" }
+    var isOffhook: Bool { state.lowercased() == "offhook" }
 }

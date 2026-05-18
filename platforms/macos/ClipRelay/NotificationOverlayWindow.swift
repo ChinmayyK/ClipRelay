@@ -16,14 +16,7 @@ final class ClipRelayToastWindowManager: NSObject {
         super.init()
 
         hostingView.translatesAutoresizingMaskIntoConstraints = false
-        panel.contentView = NSView(frame: .zero)
-        panel.contentView?.addSubview(hostingView)
-        NSLayoutConstraint.activate([
-            hostingView.leadingAnchor.constraint(equalTo: panel.contentView!.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: panel.contentView!.trailingAnchor),
-            hostingView.topAnchor.constraint(equalTo: panel.contentView!.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: panel.contentView!.bottomAnchor),
-        ])
+        panel.contentView = hostingView
 
         NotificationCenter.default.addObserver(
             self,
@@ -56,11 +49,11 @@ final class ClipRelayToastWindowManager: NSObject {
     @objc private func layoutPanel() {
         guard let screen = activeScreen else { return }
         let visible = screen.visibleFrame
-        let width: CGFloat = 372
-        let height: CGFloat = min(visible.height - 36, 520)
+        let width: CGFloat = 320
+        let height: CGFloat = min(visible.height - 36, 480)
         let frame = NSRect(
-            x: visible.maxX - width - 18,
-            y: visible.maxY - height - 18,
+            x: visible.maxX - width - 24,
+            y: visible.maxY - height - 24,
             width: width,
             height: height
         )
@@ -80,10 +73,16 @@ private final class ToastOverlayPanel: NSPanel {
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 372, height: 520),
-            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+            styleMask: [.titled, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
+        titlebarAppearsTransparent = true
+        titleVisibility = .hidden
+        standardWindowButton(.closeButton)?.isHidden = true
+        standardWindowButton(.miniaturizeButton)?.isHidden = true
+        standardWindowButton(.zoomButton)?.isHidden = true
+        
         level = .statusBar
         hasShadow = false
         isOpaque = false
@@ -129,31 +128,30 @@ private struct ToastOverlayCard: View {
     @State private var hovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 14) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 12) {
                 ZStack {
                     Circle()
-                        .fill(toast.tint.opacity(0.15))
-                        .frame(width: 44, height: 44)
+                        .fill(toast.tint.opacity(0.12))
+                        .frame(width: 32, height: 32)
                     Image(systemName: toast.systemImage)
-                        .font(.system(size: 16, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(toast.tint)
                         .symbolRenderingMode(.hierarchical)
                 }
-                .shadow(color: toast.tint.opacity(0.3), radius: 8, y: 2)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(toast.title)
-                        .font(.system(size: 15, weight: .bold))
+                        .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(titleColor)
                     Text(toast.body)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 11.5, weight: .medium))
                         .foregroundStyle(bodyColor)
-                        .lineSpacing(2)
+                        .lineSpacing(1)
                         .fixedSize(horizontal: false, vertical: true)
                     if let detail = toast.detail, !detail.isEmpty {
                         Text(detail)
-                            .font(.system(size: 11.5, weight: .semibold))
+                            .font(.system(size: 10, weight: .semibold))
                             .foregroundStyle(bodyColor.opacity(0.72))
                     }
                 }
@@ -162,9 +160,9 @@ private struct ToastOverlayCard: View {
 
                 Button(action: onDismiss) {
                     ZStack {
-                        Circle().fill(Color.white.opacity(0.1)).frame(width: 26, height: 26)
+                        Circle().fill(Color.white.opacity(0.0)).frame(width: 20, height: 20)
                         Image(systemName: "xmark")
-                            .font(.system(size: 10.5, weight: .bold))
+                            .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(bodyColor.opacity(0.8))
                     }
                 }
@@ -174,10 +172,10 @@ private struct ToastOverlayCard: View {
             }
 
             if let progress = toast.progress {
-                VStack(alignment: .leading, spacing: 6) {
-                    CRProgressBar(value: progress, tint: toast.tint, height: 6)
+                VStack(alignment: .leading, spacing: 4) {
+                    CRProgressBar(value: progress, tint: toast.tint, height: 4)
                     Text("\(Int(progress * 100))% complete")
-                        .font(.system(size: 11.5, weight: .medium))
+                        .font(.system(size: 10, weight: .medium))
                         .foregroundStyle(bodyColor.opacity(0.8))
                 }
                 .padding(.top, 4)
@@ -196,17 +194,17 @@ private struct ToastOverlayCard: View {
                 .padding(.top, 4)
             }
         }
-        .padding(18)
-        .frame(maxWidth: 360, alignment: .leading)
+        .padding(14)
+        .frame(maxWidth: 300, alignment: .leading)
         .background {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(colorScheme == .dark ? Color.black.opacity(0.4) : Color.white.opacity(0.6))
-                .background(CRHUDMaterial().clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous)))
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(colorScheme == .dark ? Color(white: 0.1).opacity(0.6) : Color.white.opacity(0.7))
+                .background(CRHUDMaterial().clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous)))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.15) : Color.black.opacity(0.1), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.08), lineWidth: 0.5)
                 }
-                .shadow(color: Color.black.opacity(0.2), radius: 24, y: 12)
+                .shadow(color: Color.black.opacity(0.12), radius: 16, y: 8)
         }
         .scaleEffect(hovered ? 1.02 : 1.0)
         .onHover { hovered = $0 }

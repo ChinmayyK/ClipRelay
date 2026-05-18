@@ -1036,6 +1036,11 @@ async fn handle_request_inner(state: DaemonState, req: IpcRequest) -> Result<Ipc
             state.engine.send_call_action(action, parse_uuid(&target_device)?).await;
             Ok(IpcResponse::ok_empty())
         }
+        // Android pushes its phone call state via IPC (daemon relays it to Mac).
+        IpcRequest::PushCallState { state: call_state, number, contact_name } => {
+            state.engine.push_call_state(call_state, number, contact_name).await;
+            Ok(IpcResponse::ok_empty())
+        }
 
         IpcRequest::Shutdown => {
             state.shutdown.notify_waiters();

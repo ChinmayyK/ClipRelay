@@ -116,13 +116,16 @@ class ClipRelayTileService : TileService() {
  * Share target — appears in Android's share sheet, letting users push
  * any shared text directly to ClipRelay peers without opening the app.
  */
-class ClipRelayShareTarget : Activity() {
+class ClipRelayShareTarget : androidx.appcompat.app.AppCompatActivity() {
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).roundToInt()
     private fun c(@ColorRes id: Int): Int = ContextCompat.getColor(this, id)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        
+        // Ensure transparent activity background so the dim layer of the dialog shows correctly
+        window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
 
         val sharedUris = when (intent?.action) {
             Intent.ACTION_SEND -> {
@@ -163,21 +166,17 @@ class ClipRelayShareTarget : Activity() {
             Toast.makeText(this, "Pushed to ClipRelay peers", Toast.LENGTH_SHORT).show()
             finish()
         } else if (!sharedUris.isNullOrEmpty()) {
-            setContentView(buildPicker(sharedUris, sharedName))
-            styleDialogWindow()
+            val dialog = com.google.android.material.bottomsheet.BottomSheetDialog(this, R.style.Theme_ClipRelay_Dialog)
+            dialog.setContentView(buildPicker(sharedUris, sharedName, dialog))
+            dialog.setOnDismissListener { finish() }
+            dialog.show()
         } else {
             Toast.makeText(this, "Nothing to push", Toast.LENGTH_SHORT).show()
             finish()
         }
     }
 
-    private fun styleDialogWindow() {
-        window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        val width = (resources.displayMetrics.widthPixels * 0.92f).roundToInt()
-        window?.setLayout(width, ViewGroup.LayoutParams.WRAP_CONTENT)
-    }
-
-    private fun buildPicker(sharedUris: List<Uri>, sharedName: String?): View {
+    private fun buildPicker(sharedUris: List<Uri>, sharedName: String?, dialog: android.app.Dialog): View {
         val peers = getSharedPreferences(ClipRelayService.PREFS_NAME, MODE_PRIVATE)
             .peerSnapshots()
             .filter { it.isConnected }
@@ -206,7 +205,6 @@ class ClipRelayShareTarget : Activity() {
 
         return FrameLayout(this).apply {
             setBackgroundColor(Color.TRANSPARENT)
-            setPadding(dp(10), dp(10), dp(10), dp(10))
 
             addView(ScrollView(this@ClipRelayShareTarget).apply {
                 overScrollMode = View.OVER_SCROLL_NEVER
@@ -215,11 +213,7 @@ class ClipRelayShareTarget : Activity() {
                 addView(LinearLayout(this@ClipRelayShareTarget).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(dp(20), dp(22), dp(20), dp(20))
-                    background = GradientDrawable().also {
-                        it.cornerRadius = dp(26).toFloat()
-                        it.setColor(c(R.color.cr_bg_card))
-                        it.setStroke(dp(1), c(R.color.cr_border))
-                    }
+                    // Background is handled automatically by Material3 BottomSheetDialog
 
                     addView(TextView(this@ClipRelayShareTarget).apply {
                         text = "Send with ClipRelay"
@@ -272,7 +266,7 @@ class ClipRelayShareTarget : Activity() {
                     }
 
                     addView(space(18))
-                    addView(buttonRow(sharedUris, sharedName, peers, selectedDevice))
+                    addView(buttonRow(sharedUris, sharedName, peers, selectedDevice, dialog))
                 })
             }, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
@@ -286,18 +280,19 @@ class ClipRelayShareTarget : Activity() {
         sharedUris: List<Uri>,
         sharedName: String?,
         peers: List<PeerSnapshot>,
-        selectedDevice: Array<String?>
+        selectedDevice: Array<String?>,
+        dialog: android.app.Dialog
     ): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
 
-        addView(actionButton("Cancel", filled = false) { finish() }, LinearLayout.LayoutParams(
+        addView(actionButton("Cancel", filled = false) { dialog.dismiss() }, LinearLayout.LayoutParams(
             0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
         ).also { it.marginEnd = dp(8) })
 
         addView(actionButton("Send", filled = true) {
             if (peers.isEmpty()) {
                 startActivity(packageManager.getLaunchIntentForPackage(packageName))
-                finish()
+                dialog.dismiss()
                 return@actionButton
             }
             val svc = Intent(this@ClipRelayShareTarget, ClipRelayService::class.java).apply {
@@ -317,7 +312,7 @@ class ClipRelayShareTarget : Activity() {
                 else "Sharing to selected device",
                 Toast.LENGTH_SHORT
             ).show()
-            finish()
+            dialog.dismiss()
         }, LinearLayout.LayoutParams(
             0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
         ))

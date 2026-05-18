@@ -36,6 +36,7 @@ platforms/windows/**/obj/
 platforms/android/.gradle/
 platforms/android/app/build/
 platforms/android/local.properties
+*.hprof
 
 # Linux
 *.deb

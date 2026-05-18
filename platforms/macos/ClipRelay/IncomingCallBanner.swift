@@ -21,6 +21,7 @@ final class CallBannerWindowManager: NSObject {
     private let panel: CallBannerPanel
     private let hostingView: NSHostingView<CallBannerContainerView>
     private var audioPlayer: AVAudioPlayer?
+    private var ringRepeatTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
 
     init(store: ClipRelayStore) {
@@ -30,14 +31,7 @@ final class CallBannerWindowManager: NSObject {
         super.init()
 
         hostingView.translatesAutoresizingMaskIntoConstraints = false
-        panel.contentView = NSView(frame: .zero)
-        panel.contentView?.addSubview(hostingView)
-        NSLayoutConstraint.activate([
-            hostingView.leadingAnchor.constraint(equalTo: panel.contentView!.leadingAnchor),
-            hostingView.trailingAnchor.constraint(equalTo: panel.contentView!.trailingAnchor),
-            hostingView.topAnchor.constraint(equalTo: panel.contentView!.topAnchor),
-            hostingView.bottomAnchor.constraint(equalTo: panel.contentView!.bottomAnchor),
-        ])
+        panel.contentView = hostingView
 
         NotificationCenter.default.addObserver(
             self,
@@ -61,10 +55,14 @@ final class CallBannerWindowManager: NSObject {
 
     private func handleCallUpdate(_ call: IncomingCallState?) {
         layoutPanel()
-        if let call = call, call.isRinging {
+        if let call = call, (call.isRinging || call.isOffhook) {
             panel.orderFrontRegardless()
-            startRingtone()
-            NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
+            if call.isRinging {
+                startRingtone()
+                NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
+            } else {
+                stopRingtone()
+            }
         } else {
             panel.orderOut(nil)
             stopRingtone()
@@ -95,27 +93,42 @@ final class CallBannerWindowManager: NSObject {
 
     private func startRingtone() {
         guard audioPlayer == nil || audioPlayer?.isPlaying == false else { return }
-        // Try bundled ringtone first, fall back to system sound
-        let url = Bundle.main.url(forResource: "ringtone", withExtension: "caf")
+
+        // Try bundled ringtone first
+        let bundleURL = Bundle.main.url(forResource: "ringtone", withExtension: "caf")
             ?? Bundle.main.url(forResource: "ringtone", withExtension: "mp3")
-        guard let url = url else {
-            // Fallback: play system sound
-            NSSound.beep()
-            return
+
+        if let url = bundleURL {
+            do {
+                audioPlayer = try AVAudioPlayer(contentsOf: url)
+                audioPlayer?.numberOfLoops = -1
+                audioPlayer?.volume = 0.7
+                audioPlayer?.play()
+                return
+            } catch {
+                NSLog("ClipRelay: failed to load bundled ringtone: \(error)")
+            }
         }
-        do {
-            audioPlayer = try AVAudioPlayer(contentsOf: url)
-            audioPlayer?.numberOfLoops = -1 // infinite loop
-            audioPlayer?.volume = 0.7
-            audioPlayer?.play()
-        } catch {
-            NSLog("ClipRelay: failed to play ringtone: \(error)")
+
+        // Fallback: play a system sound on repeat using a Timer
+        let systemSoundNames = ["Glass", "Ping", "Pop", "Tink"]
+        let soundName = systemSoundNames.first(where: { NSSound(named: $0) != nil }) ?? "Glass"
+        if let sound = NSSound(named: soundName) {
+            sound.volume = 0.8
+            sound.play()
+            // Repeat every 3 seconds via a stored timer reference in the panel's run loop
+            ringRepeatTimer?.invalidate()
+            ringRepeatTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { _ in
+                NSSound(named: soundName)?.play()
+            }
         }
     }
 
     private func stopRingtone() {
         audioPlayer?.stop()
         audioPlayer = nil
+        ringRepeatTimer?.invalidate()
+        ringRepeatTimer = nil
     }
 }
 
@@ -125,10 +138,16 @@ private final class CallBannerPanel: NSPanel {
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 380, height: 160),
-            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+            styleMask: [.titled, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
+        titlebarAppearsTransparent = true
+        titleVisibility = .hidden
+        standardWindowButton(.closeButton)?.isHidden = true
+        standardWindowButton(.miniaturizeButton)?.isHidden = true
+        standardWindowButton(.zoomButton)?.isHidden = true
+        
         level = .floating
         hasShadow = true
         isOpaque = false
@@ -149,11 +168,12 @@ private struct CallBannerContainerView: View {
 
     var body: some View {
         Group {
-            if let call = store.activeCall, call.isRinging {
+            if let call = store.activeCall, (call.isRinging || call.isOffhook) {
                 CallBannerView(
                     call: call,
                     onAccept: { store.acceptCall() },
-                    onDecline: { store.declineCall() }
+                    onDecline: { store.declineCall() },
+                    onRouteAudio: { route in store.routeAudio(to: route) }
                 )
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -170,50 +190,70 @@ private struct CallBannerView: View {
     let call: IncomingCallState
     let onAccept: () -> Void
     let onDecline: () -> Void
+    let onRouteAudio: (String) -> Void
 
     @State private var ringPulse = false
+    @State private var callDuration: TimeInterval = 0
+    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     @Environment(\.colorScheme) var colorScheme
 
     // ── Design tokens ────────────────────────────────────────────────────────
     private let acceptGreen = Color(hex: 0x30D158)
     private let declineRed = Color(hex: 0xFF453A)
+    private let activeBlue = Color.blue
+
+    private var formatDuration: String {
+        let m = Int(callDuration) / 60
+        let s = Int(callDuration) % 60
+        return String(format: "%02d:%02d", m, s)
+    }
 
     var body: some View {
         HStack(spacing: 16) {
             // ── Caller avatar / phone icon ────────────────────────────────
             ZStack {
-                Circle()
-                    .fill(acceptGreen.opacity(0.15))
-                    .frame(width: 56, height: 56)
-                    .scaleEffect(ringPulse ? 1.25 : 1.0)
-                    .opacity(ringPulse ? 0.0 : 0.4)
+                if call.isRinging {
+                    Circle()
+                        .fill(acceptGreen.opacity(0.15))
+                        .frame(width: 56, height: 56)
+                        .scaleEffect(ringPulse ? 1.25 : 1.0)
+                        .opacity(ringPulse ? 0.0 : 0.4)
+                }
 
                 Circle()
                     .fill(colorScheme == .dark ? Color.white.opacity(0.15) : Color.black.opacity(0.1))
                     .frame(width: 48, height: 48)
 
-                Image(systemName: "phone.fill")
+                Image(systemName: call.isOffhook ? "phone.connection" : "phone.fill")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(acceptGreen)
-                    .rotationEffect(.degrees(ringPulse ? -15 : 15))
+                    .foregroundStyle(call.isOffhook ? activeBlue : acceptGreen)
+                    .rotationEffect(.degrees((call.isRinging && ringPulse) ? -15 : (call.isRinging ? 15 : 0)))
             }
             .onAppear {
-                withAnimation(
-                    .easeInOut(duration: 0.5)
-                    .repeatForever(autoreverses: true)
-                ) {
-                    ringPulse = true
+                if call.isRinging {
+                    withAnimation(.easeInOut(duration: 0.5).repeatForever(autoreverses: true)) {
+                        ringPulse = true
+                    }
                 }
             }
 
             // ── Caller info ──────────────────────────────────────────────
             VStack(alignment: .leading, spacing: 4) {
-                Text("Incoming Call")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(acceptGreen)
-                    .textCase(.uppercase)
-                    .tracking(0.8)
+                if call.isOffhook {
+                    Text("Ongoing Call • \(formatDuration)")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(activeBlue)
+                        .textCase(.uppercase)
+                        .tracking(0.8)
+                        .onReceive(timer) { _ in callDuration += 1 }
+                } else {
+                    Text("Incoming Call")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(acceptGreen)
+                        .textCase(.uppercase)
+                        .tracking(0.8)
+                }
 
                 Text(call.displayName)
                     .font(.system(size: 18, weight: .bold))
@@ -232,26 +272,72 @@ private struct CallBannerView: View {
             Spacer(minLength: 0)
 
             // ── Action buttons ────────────────────────────────────────────
-            VStack(spacing: 8) {
-                Button(action: onAccept) {
-                    Image(systemName: "phone.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
+            if call.isRinging {
+                VStack(spacing: 8) {
+                    Button(action: onAccept) {
+                        ZStack {
+                            Circle().fill(acceptGreen)
+                            Image(systemName: "phone.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
                         .frame(width: 44, height: 44)
-                        .background(Circle().fill(acceptGreen))
-                }
-                .buttonStyle(.plain)
-                .shadow(color: acceptGreen.opacity(0.4), radius: 8, y: 2)
+                        .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .shadow(color: acceptGreen.opacity(0.4), radius: 8, y: 2)
 
-                Button(action: onDecline) {
-                    Image(systemName: "phone.down.fill")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
+                    Button(action: onDecline) {
+                        ZStack {
+                            Circle().fill(declineRed)
+                            Image(systemName: "phone.down.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
                         .frame(width: 44, height: 44)
-                        .background(Circle().fill(declineRed))
+                        .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .shadow(color: declineRed.opacity(0.4), radius: 8, y: 2)
                 }
-                .buttonStyle(.plain)
-                .shadow(color: declineRed.opacity(0.4), radius: 8, y: 2)
+            } else {
+                // Ongoing call actions
+                HStack(spacing: 12) {
+                    // Audio Routing Menu
+                    Menu {
+                        Button(action: { onRouteAudio("earpiece") }) {
+                            Label("Phone Earpiece", systemImage: "iphone")
+                        }
+                        Button(action: { onRouteAudio("speaker") }) {
+                            Label("Speakerphone", systemImage: "speaker.wave.3.fill")
+                        }
+                        Button(action: { onRouteAudio("bluetooth") }) {
+                            Label("Bluetooth Device", systemImage: "headphones")
+                        }
+                    } label: {
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(Color.primary)
+                            .frame(width: 44, height: 44)
+                            .background(Circle().fill(colorScheme == .dark ? Color.white.opacity(0.15) : Color.black.opacity(0.1)))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .frame(width: 44, height: 44)
+                    .buttonStyle(.plain)
+
+                    Button(action: onDecline) {
+                        ZStack {
+                            Circle().fill(declineRed)
+                            Image(systemName: "phone.down.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        .frame(width: 44, height: 44)
+                        .contentShape(Circle())
+                    }
+                    .buttonStyle(.plain)
+                    .shadow(color: declineRed.opacity(0.4), radius: 8, y: 2)
+                }
             }
         }
         .padding(.horizontal, 20)

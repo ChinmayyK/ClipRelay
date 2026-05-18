@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- ── Page backgrounds ───────────────────────────────────────── -->
-    <color name="cr_bg">#000000</color>
-    <color name="cr_bg_card">#000000</color>
-    <color name="cr_bg_inset">#0A0A0A</color>
-    <color name="cr_bg_input">#18181B</color>
+    <color name="cr_bg">#09090B</color>
+    <color name="cr_bg_card">#18181B</color>
+    <color name="cr_bg_inset">#27272A</color>
+    <color name="cr_bg_input">#3F3F46</color>
 
     <!-- ── Borders and dividers ───────────────────────────────────── -->
     <color name="cr_border">#27272A</color>
@@ -49,7 +49,7 @@
     <color name="cr_k_warn_bg">#78350F</color>
 
     <!-- ── Navigation ─────────────────────────────────────────────── -->
-    <color name="cr_nav_bg">#000000</color>
+    <color name="cr_nav_bg">#18181B</color>
     <color name="cr_nav_on">#FFFFFF</color>
     <color name="cr_nav_off">#71717A</color>
     <color name="cr_icon_bg">#0A0A0A</color>

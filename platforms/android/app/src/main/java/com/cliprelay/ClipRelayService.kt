@@ -234,6 +234,7 @@ class ClipRelayService : Service() {
         // Notification channels
         private const val CHAN_SERVICE = "cr_service"   // IMPORTANCE_MIN — silent persistent
         private const val CHAN_ALERTS  = "cr_alerts"    // IMPORTANCE_DEFAULT — trust/file/failure
+        private const val CHAN_CALLS   = "cr_calls"     // IMPORTANCE_HIGH — incoming call banner
 
         // Notification IDs
         private const val NOTIF_ID_SERVICE           = 1001
@@ -242,6 +243,7 @@ class ClipRelayService : Service() {
         private const val NOTIF_ID_FAILURE           = 1004
         private const val NOTIF_ID_CLIPBOARD_AVAILABLE = 1005
         private const val NOTIF_ID_FILE_BASE         = 2000  // + (tid.hashCode() and 0xFFF)
+        private const val NOTIF_ID_CALL              = 3001  // incoming call banner
 
         // Intent actions
         const val ACTION_START              = "com.cliprelay.START"
@@ -349,9 +351,9 @@ class ClipRelayService : Service() {
     private val nsdRetryCount = AtomicLong(0L)
     private var nsdRetryRunnable: Runnable? = null
 
-    // WakeLock — held ONLY during active event drain, released immediately after.
-    // NOT a permanent wakelock; the foreground service itself keeps us alive.
+    // WakeLock & WifiLock — held continuously to prevent sleep disconnections.
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
 
     // MulticastLock — held for the lifetime of the service.
     // Many OEM WiFi drivers (Samsung, Xiaomi, OnePlus, Realme) suppress
@@ -518,6 +520,12 @@ class ClipRelayService : Service() {
                 registerNetworkCallback() // restart NSD on WiFi changes
                 startCallStateMonitor()   // call continuity: relay phone state to peers
                 persistStatus()
+            } else {
+                // Engine was already running — permission may have just been granted.
+                // Restart the call monitor in case it was skipped earlier.
+                if (hasCallPermissions() && callStateReceiver == null) {
+                    startCallStateMonitor()
+                }
             }
 
             if (intent?.action == ACTION_PUSH_TEXT) {
@@ -596,25 +604,42 @@ class ClipRelayService : Service() {
         super.onTaskRemoved(rootIntent)
     }
 
-    // ── WakeLock ──────────────────────────────────────────────────────────────
+    // ── WakeLock & WifiLock ───────────────────────────────────────────────────
 
     private fun acquireWakeLockIfNeeded() {
         if (syncMode() == BackgroundSyncMode.ALWAYS_ACTIVE && wakeLock == null) {
             wakeLock = (getSystemService(POWER_SERVICE) as PowerManager)
                 .newWakeLock(
                     PowerManager.PARTIAL_WAKE_LOCK,
-                    "ClipRelay::EventDrainLock"
+                    "ClipRelay::ContinuousLock"
                 ).apply {
                     setReferenceCounted(false)
+                    acquire()
                 }
+            
+            val wm = runCatching {
+                applicationContext.getSystemService(WIFI_SERVICE) as android.net.wifi.WifiManager
+            }.getOrNull()
+            
+            if (wm != null) {
+                wifiLock = wm.createWifiLock(
+                    android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                    "ClipRelay::WifiLock"
+                ).apply {
+                    setReferenceCounted(false)
+                    acquire()
+                }
+            }
         }
     }
 
     private fun releaseWakeLock() {
         runCatching {
             wakeLock?.let { if (it.isHeld) it.release() }
+            wifiLock?.let { if (it.isHeld) it.release() }
         }
         wakeLock = null
+        wifiLock = null
     }
 
     // ── Multicast lock ────────────────────────────────────────────────────────
@@ -700,20 +725,14 @@ class ClipRelayService : Service() {
     }
 
     private fun drainEvents() {
-        // Acquire WakeLock only during drain, then release — prevents battery drain
-        // while still ensuring we process events immediately when they arrive.
-        val lock = wakeLock
-        val shouldLock = lock != null && syncMode() == BackgroundSyncMode.ALWAYS_ACTIVE
-        if (shouldLock) runCatching { if (!(lock!!.isHeld)) lock.acquire(2_000L) }
-
         try {
             while (engineHandle != 0L) {
                 val ev = ClipRelayJni.pollEvent(engineHandle)
                 if (ev == 0L) break
                 try { handleEvent(ev) } finally { ClipRelayJni.freeEvent(ev) }
             }
-        } finally {
-            if (shouldLock) runCatching { if (lock!!.isHeld) lock.release() }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception during event drain", e)
         }
     }
 
@@ -849,6 +868,7 @@ class ClipRelayService : Service() {
                 val fileName = ClipRelayJni.eventTransferFileName(ev) ?: "file"
                 val destPath = ClipRelayJni.eventTransferDestPath(ev) ?: ""
                 updateActivityTransferComplete(tid, destPath)
+                cancelFileTransferNotification(tid)
                 showFileTransferCompleteNotification(from, fileName, destPath)
             }
 
@@ -1542,47 +1562,65 @@ class ClipRelayService : Service() {
 
     // ── Call continuity ──────────────────────────────────────────────────────
     //
-    // Monitors phone call state via PhoneStateListener (or TelephonyCallback on
-    // API 31+) and pushes ringing/offhook/idle events to all connected peers.
-    // Remote call actions (accept/decline) from peers are executed via TelecomManager.
+    // Remote call actions (accept/decline) from the Mac are executed via TelecomManager.
 
-    @Suppress("DEPRECATION")
-    private val callStateListener = object : android.telephony.PhoneStateListener() {
-        override fun onCallStateChanged(state: Int, incomingNumber: String?) {
-            val stateStr = when (state) {
-                android.telephony.TelephonyManager.CALL_STATE_RINGING -> "ringing"
-                android.telephony.TelephonyManager.CALL_STATE_OFFHOOK -> "offhook"
-                android.telephony.TelephonyManager.CALL_STATE_IDLE    -> "idle"
-                else -> return
-            }
-            val number = incomingNumber.orEmpty()
-            val contact = resolveContactName(number)
-            Log.i(TAG, "Call state: $stateStr number=$number contact=$contact")
-            val h = engineHandle
-            if (h != 0L) {
-                ClipRelayJni.pushCallState(h, stateStr, number, contact)
-            }
+    private var callStateReceiver: android.content.BroadcastReceiver? = null
+
+    private fun onCallStateUpdate(state: Int, incomingNumber: String?) {
+        val stateStr = when (state) {
+            android.telephony.TelephonyManager.CALL_STATE_RINGING -> "ringing"
+            android.telephony.TelephonyManager.CALL_STATE_OFFHOOK -> "offhook"
+            android.telephony.TelephonyManager.CALL_STATE_IDLE    -> "idle"
+            else -> return
+        }
+        val number  = incomingNumber.orEmpty()
+        val contact = resolveContactName(number)
+        Log.i(TAG, "Call state: $stateStr number=$number contact=$contact")
+        val h = engineHandle
+        if (h != 0L) {
+            ClipRelayJni.pushCallState(h, stateStr, number, contact)
+        }
+        // Show/dismiss the Android-side call notification
+        when (stateStr) {
+            "ringing" -> showIncomingCallNotification(number, contact)
+            "idle", "offhook" -> notificationManager.cancel(NOTIF_ID_CALL)
         }
     }
 
     private fun startCallStateMonitor() {
         if (!hasCallPermissions()) {
-            Log.i(TAG, "Call continuity: missing READ_PHONE_STATE permission, skipping")
+            Log.i(TAG, "Call continuity: missing READ_PHONE_STATE permission — skipping")
             return
         }
-        runCatching {
-            @Suppress("DEPRECATION")
-            val tm = getSystemService(TELEPHONY_SERVICE) as android.telephony.TelephonyManager
-            tm.listen(callStateListener, android.telephony.PhoneStateListener.LISTEN_CALL_STATE)
-            Log.i(TAG, "Call state monitor started")
-        }.onFailure { Log.w(TAG, "Failed to start call state monitor", it) }
+        stopCallStateMonitor()
+
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: android.content.Context, intent: Intent) {
+                if (intent.action == android.telephony.TelephonyManager.ACTION_PHONE_STATE_CHANGED) {
+                    val stateStr = intent.getStringExtra(android.telephony.TelephonyManager.EXTRA_STATE)
+                    val number = intent.getStringExtra(android.telephony.TelephonyManager.EXTRA_INCOMING_NUMBER)
+                    val state = when (stateStr) {
+                        android.telephony.TelephonyManager.EXTRA_STATE_RINGING -> android.telephony.TelephonyManager.CALL_STATE_RINGING
+                        android.telephony.TelephonyManager.EXTRA_STATE_OFFHOOK -> android.telephony.TelephonyManager.CALL_STATE_OFFHOOK
+                        android.telephony.TelephonyManager.EXTRA_STATE_IDLE -> android.telephony.TelephonyManager.CALL_STATE_IDLE
+                        else -> -1
+                    }
+                    if (state != -1) {
+                        onCallStateUpdate(state, number)
+                    }
+                }
+            }
+        }
+        val filter = android.content.IntentFilter(android.telephony.TelephonyManager.ACTION_PHONE_STATE_CHANGED)
+        registerReceiver(receiver, filter)
+        callStateReceiver = receiver
+        Log.i(TAG, "Call state monitor started (BroadcastReceiver)")
     }
 
     private fun stopCallStateMonitor() {
-        runCatching {
-            @Suppress("DEPRECATION")
-            val tm = getSystemService(TELEPHONY_SERVICE) as android.telephony.TelephonyManager
-            tm.listen(callStateListener, android.telephony.PhoneStateListener.LISTEN_NONE)
+        callStateReceiver?.let {
+            unregisterReceiver(it)
+            callStateReceiver = null
         }
     }
 
@@ -1609,6 +1647,40 @@ class ClipRelayService : Service() {
         }.getOrDefault("")
     }
 
+    /** Show a high-priority heads-up notification for an incoming call on Android. */
+    private fun showIncomingCallNotification(number: String, contactName: String) {
+        val callerLabel = when {
+            contactName.isNotBlank() -> contactName
+            number.isNotBlank()      -> number
+            else                     -> "Unknown caller"
+        }
+
+        // Tapping the notification opens the app
+        val openPi = PendingIntent.getActivity(
+            this, 0,
+            packageManager.getLaunchIntentForPackage(packageName),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val notif = NotificationCompat.Builder(this, CHAN_CALLS)
+            .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+            .setContentTitle("📞 Incoming call")
+            .setContentText(callerLabel)
+            .setSubText("ClipRelay — relaying to your Mac")
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setContentIntent(openPi)
+            .setStyle(NotificationCompat.BigTextStyle()
+                .bigText("$callerLabel is calling. Your Mac will show a banner with Accept/Decline.")
+                .setSummaryText("Call relay active"))
+            .build()
+
+        notificationManager.notify(NOTIF_ID_CALL, notif)
+    }
+
     @Suppress("DEPRECATION")
     private fun handleRemoteCallAction(action: String) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -1617,7 +1689,9 @@ class ClipRelayService : Service() {
                 "accept" -> {
                     if (checkSelfPermission(android.Manifest.permission.ANSWER_PHONE_CALLS) ==
                         android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                        runCatching { tm.acceptRingingCall() }
+                        runCatching { 
+                            tm.acceptRingingCall()
+                        }
                             .onSuccess { Log.i(TAG, "Remote accept: call accepted") }
                             .onFailure { Log.w(TAG, "Remote accept failed", it) }
                     } else {
@@ -1634,12 +1708,34 @@ class ClipRelayService : Service() {
                         Log.w(TAG, "Remote decline: ANSWER_PHONE_CALLS permission not granted")
                     }
                 }
+                "audio_earpiece" -> {
+                    val am = getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
+                    am?.isSpeakerphoneOn = false
+                    am?.stopBluetoothSco()
+                    am?.isBluetoothScoOn = false
+                    Log.i(TAG, "Remote audio route: Earpiece")
+                }
+                "audio_speaker" -> {
+                    val am = getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
+                    am?.isSpeakerphoneOn = true
+                    am?.stopBluetoothSco()
+                    am?.isBluetoothScoOn = false
+                    Log.i(TAG, "Remote audio route: Speaker")
+                }
+                "audio_bluetooth" -> {
+                    val am = getSystemService(android.content.Context.AUDIO_SERVICE) as? android.media.AudioManager
+                    am?.isSpeakerphoneOn = false
+                    am?.startBluetoothSco()
+                    am?.isBluetoothScoOn = true
+                    Log.i(TAG, "Remote audio route: Bluetooth")
+                }
                 else -> Log.w(TAG, "Unknown remote call action: $action")
             }
         } else {
             Log.w(TAG, "Remote call actions require API 26+")
         }
     }
+
 
     // ── NSD (Network Service Discovery) ────────────────────────────────────────────────
     //
@@ -1981,6 +2077,19 @@ class ClipRelayService : Service() {
             setShowBadge(true)
             enableLights(true)
             enableVibration(true)
+        })
+
+        // Channel C: incoming call relay banner — full heads-up priority
+        nm.createNotificationChannel(NotificationChannel(
+            CHAN_CALLS,
+            "ClipRelay Calls",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Incoming call relay notifications from your phone"
+            setShowBadge(true)
+            enableVibration(true)
+            enableLights(true)
+            setBypassDnd(true)  // show even in Do Not Disturb
         })
     }
 

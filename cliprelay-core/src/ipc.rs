@@ -309,6 +309,16 @@ pub enum IpcRequest {
         /// Target Android device UUID
         target_device: String,
     },
+    /// Push a phone call state change from this Android device to all peers.
+    /// Called by the Android service when the phone call state changes.
+    PushCallState {
+        /// "ringing", "offhook", or "idle"
+        state: String,
+        /// Raw phone number (may be empty on API 31+)
+        number: String,
+        /// Resolved contact name (may be empty)
+        contact_name: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -592,6 +602,10 @@ pub mod client {
                             }
                             Err(e) => IpcResponse::error(format!("bad target_device: {e}")),
                         }
+                    }
+                    IpcRequest::PushCallState { state, number, contact_name } => {
+                        eng.push_call_state(state, number, contact_name).await;
+                        IpcResponse::ok_empty()
                     }
                     // ── Metrics ────────────────────────────────────────────────────────
                     IpcRequest::GetMetrics => {

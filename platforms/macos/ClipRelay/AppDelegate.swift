@@ -2,11 +2,15 @@ import AppKit
 import Carbon
 import Combine
 import SwiftUI
+import UserNotifications
+import Darwin
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = ClipRelayStore()
     private var statusItem: NSStatusItem!
+    private var menuBarDropView: MenuBarDropView?
+    private var previousConnectedCount = 0
     private let statusMenuItem  = NSMenuItem(title: "Starting…", action: nil, keyEquivalent: "")
     private let lastSyncMenuItem = NSMenuItem(title: "Last sync: —", action: nil, keyEquivalent: "")
     private var dashboardController:      NSWindowController?
@@ -20,7 +24,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard ensureSingleRunningInstance() else { return }
         NSApp.setActivationPolicy(.accessory)
-        NSApp.appearance = NSAppearance(named: .aqua)
+        // Restore user's theme preference (defaults to light)
+        let savedTheme = UserDefaults.standard.string(forKey: "cr_app_theme") ?? "light"
+        switch savedTheme {
+        case "dark":   NSApp.appearance = NSAppearance(named: .darkAqua)
+        case "system": NSApp.appearance = nil
+        default:       NSApp.appearance = NSAppearance(named: .aqua)
+        }
         startDaemonIfNeeded()
         setupMenuBar()
         setupWindows()
@@ -30,7 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         registerHotKeys()
         registerSleepWakeObservers()
         registerStoreNotifications()
+        // Request permission for system notifications (device-connected alerts)
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
         store.start()
+
     }
 
     /// Observe notifications posted by ClipRelayStore so it stays decoupled from AppKit.
@@ -158,27 +171,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.button?.toolTip = "ClipRelay"
 
-        if let img = statusBarImage() {
-            statusItem.button?.image = img
-            statusItem.button?.imageScaling = .scaleProportionallyUpOrDown
-            statusItem.button?.imagePosition = .imageOnly
-            statusItem.button?.title = ""
-        } else {
-            statusItem.button?.title = "CR"
-            statusItem.button?.font = .systemFont(ofSize: 12, weight: .semibold)
+        // ── Replace the default button with a custom drag-and-drop view ──────────
+        if let button = statusItem.button {
+            let dropView = MenuBarDropView(frame: button.bounds)
+            dropView.autoresizingMask = [.width, .height]
+            dropView.iconImage = statusBarImage()
+            dropView.delegate  = self
+            button.addSubview(dropView)
+            menuBarDropView = dropView
+            // Hide the default button's own image so only our view renders.
+            button.image    = nil
+            button.title    = ""
+            button.toolTip  = "ClipRelay — Drag files here to send to your device"
         }
 
         let menu = NSMenu()
-        statusMenuItem.isEnabled  = false
+        statusMenuItem.isEnabled   = false
         lastSyncMenuItem.isEnabled = false
         menu.addItem(statusMenuItem)
         menu.addItem(lastSyncMenuItem)
         menu.addItem(.separator())
-        let dashItem = NSMenuItem(title: "Open Dashboard", action: #selector(openDashboard), keyEquivalent: "0")
-        let quickItem = NSMenuItem(title: "Quick Access",  action: #selector(openQuickAccess), keyEquivalent: "v")
-        let cmdItem   = NSMenuItem(title: "Command Palette", action: #selector(openCommandPalette), keyEquivalent: "k")
+
+        // ── Core navigation items ───────────────────────────────────────────────
+        let dashItem  = NSMenuItem(title: "Open Dashboard",   action: #selector(openDashboard),      keyEquivalent: "0")
+        let quickItem = NSMenuItem(title: "Quick Access",     action: #selector(openQuickAccess),    keyEquivalent: "v")
+        let cmdItem   = NSMenuItem(title: "Command Palette",  action: #selector(openCommandPalette), keyEquivalent: "k")
         dashItem.keyEquivalentModifierMask  = [.command, .shift]
         quickItem.keyEquivalentModifierMask = [.command, .shift]
         cmdItem.keyEquivalentModifierMask   = [.command]
@@ -186,15 +204,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quickItem)
         menu.addItem(cmdItem)
         menu.addItem(.separator())
+
+        // ── Send files ─────────────────────────────────────────────────────────
+        let sendFileItem = NSMenuItem(title: "Send File to Device…", action: #selector(sendFileFromMenu), keyEquivalent: "")
+        menu.addItem(sendFileItem)
+
+        // ── Connect manually ───────────────────────────────────────────────────
+        let connectItem = NSMenuItem(title: "Connect to IP…", action: #selector(connectManually), keyEquivalent: "")
+        menu.addItem(connectItem)
+
+        // ── Scan / Rescan ──────────────────────────────────────────────────────
+        let scanItem = NSMenuItem(title: "Scan for Devices", action: #selector(scanDevices), keyEquivalent: "")
+        menu.addItem(scanItem)
+
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit ClipRelay", action: #selector(quitApp), keyEquivalent: "q"))
         statusItem.menu = menu
     }
 
     private func statusBarImage() -> NSImage? {
         if #available(macOS 11.0, *) {
-            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
-            // Matches the Android app icon (two arrows inside a ring)
-            return NSImage(systemSymbolName: "arrow.triangle.2.circlepath.circle", accessibilityDescription: "ClipRelay")?.withSymbolConfiguration(config)
+            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+            return NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "ClipRelay")?.withSymbolConfiguration(config)
         }
         return nil
     }
@@ -257,6 +288,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.presentTrustPrompt(for: detail)
             }
             .store(in: &cancellables)
+
+        // ── Instant "device connected" notification ──────────────────────────
+        store.$peers
+            .receive(on: RunLoop.main)
+            .map { $0.filter(\.connected).map(ManagedDevice.init) }
+            .sink { [weak self] (devices: [ManagedDevice]) in
+                guard let self else { return }
+                let count = devices.count
+                if count > self.previousConnectedCount, let device = devices.last ?? devices.first {
+                    // Fire immediately — no delay
+                    self.store.showToast(
+                        title: "\(device.name) connected",
+                        body: "Clipboard, file sync & call continuity are live.",
+                        tint: CRTheme.accentGreen,
+                        systemImage: "link.badge.plus",
+                        ttl: 4.0
+                    )
+                    // Also send a macOS UserNotification for when the app is hidden
+                    self.sendSystemNotification(
+                        title: "ClipRelay — Device Connected",
+                        body: "\(device.name) is now syncing."
+                    )
+                    // Animate the menu bar icon briefly
+                    self.pulseMenuBarIcon()
+                } else if count == 0 && self.previousConnectedCount > 0 {
+                    self.store.showToast(
+                        title: "Device disconnected",
+                        body: "No devices currently connected.",
+                        tint: CRTheme.inkSoft,
+                        systemImage: "wifi.slash",
+                        ttl: 3.0
+                    )
+                }
+                self.previousConnectedCount = count
+            }
+            .store(in: &cancellables)
+    }
+
+    // MARK: - System notifications
+
+    private func sendSystemNotification(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body  = body
+        content.sound = .default
+        let req = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+        UNUserNotificationCenter.current().add(req)
+    }
+
+    private func pulseMenuBarIcon() {
+        guard let button = statusItem.button else { return }
+        let anim = CABasicAnimation(keyPath: "opacity")
+        anim.fromValue  = 1.0
+        anim.toValue    = 0.3
+        anim.duration   = 0.18
+        anim.autoreverses = true
+        anim.repeatCount  = 3
+        button.layer?.add(anim, forKey: "pulse")
     }
 
     // MARK: - Sleep / Wake
@@ -275,22 +368,61 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             selector: #selector(handleSystemWake),
             name: NSWorkspace.didWakeNotification,
             object: nil)
+            
+        NotificationCenter.default.addObserver(self,
+            selector: #selector(handleActivityReceived(_:)),
+            name: NSNotification.Name("clipRelayActivityReceived"),
+            object: nil)
+
         wsnc.addObserver(self,
             selector: #selector(handleSystemSleep),
             name: NSWorkspace.willSleepNotification,
             object: nil)
     }
 
+    @objc private func handleActivityReceived(_ notification: Notification) {
+        guard let entry = notification.object as? IpcActivityEntry else { return }
+        
+        let title: String
+        let body: String
+        let icon: String
+        let tint: Color
+        
+        if entry.kind == "file" {
+            title = "File Received"
+            body = entry.summary ?? "A new file was received from \(entry.device_name)."
+            icon = "doc"
+            tint = CRTheme.accentBlue
+        } else {
+            title = "Clipboard Received"
+            body = "Copied from \(entry.device_name)"
+            icon = "doc.on.clipboard"
+            tint = CRTheme.accentGreen
+        }
+        
+        sendSystemNotification(title: title, body: body)
+        store.showToast(title: title, body: body, tint: tint, systemImage: icon, ttl: 4.0)
+    }
+
     @objc private func handleSystemWake() {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            // On wake, poll immediately and force a discovery rescan so we
-            // don't wait for the normal idle polling/discovery cadence.
+            NSLog("ClipRelay: system woke — starting reconnect sequence")
+
+            // Stage 1: Immediate refresh + discovery rescan
             await store.refresh()
             store.scanForDevices()
 
-            try? await Task.sleep(nanoseconds: 850_000_000)
-            await store.refresh()
+            // Stage 2: Exponential retry — stop early if peers reconnect
+            let retryDelays: [UInt64] = [2_000_000_000, 5_000_000_000]
+            for delay in retryDelays {
+                if store.connectedCount > 0 { break }
+                try? await Task.sleep(nanoseconds: delay)
+                await store.refresh()
+                store.scanForDevices()
+            }
+
+            // Announce reconnection result
             if let peer = store.connectedDevices.first {
                 store.showToast(
                     title: "Connected to \(peer.name)",
@@ -299,6 +431,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     systemImage: "link.badge.plus",
                     ttl: 3.0
                 )
+            } else {
+                NSLog("ClipRelay: wake reconnect — no peers found after retries")
             }
         }
     }
@@ -362,6 +496,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.image = badged
         button.imageScaling = .scaleProportionallyUpOrDown
         button.toolTip = "ClipRelay • \(pendingCount) clipboard item\(pendingCount == 1 ? "" : "s") waiting — click to apply"
+        menuBarDropView?.badgeCount = pendingCount
     }
 
     // MARK: - Hot keys
@@ -376,6 +511,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             id: 2, keyCode: UInt32(kVK_ANSI_K),
             modifiers: UInt32(cmdKey)
         ) { [weak self] in self?.openCommandPalette() }
+
+        // F24: ⌘⇧C — Force push current clipboard to all connected peers
+        GlobalHotKeyManager.shared.register(
+            id: 3, keyCode: UInt32(kVK_ANSI_C),
+            modifiers: UInt32(cmdKey | shiftKey)
+        ) { [weak self] in self?.forcePushClipboard() }
+    }
+
+    /// F24: Push the current Mac clipboard to all connected peers immediately.
+    private func forcePushClipboard() {
+        guard store.connectedCount > 0 else {
+            store.showToast(
+                title: "No Devices Connected",
+                body: "Connect a device to push clipboard.",
+                tint: CRTheme.inkSoft,
+                systemImage: "wifi.slash",
+                ttl: 2.5
+            )
+            return
+        }
+        Task {
+            do {
+                try await ClipRelayIPCClient.shared.sendClipboardCurrent(targetDeviceId: nil)
+                store.showToast(
+                    title: "Clipboard Synced",
+                    body: "Pushed to all connected devices.",
+                    tint: CRTheme.accentGreen,
+                    systemImage: "arrow.up.circle.fill",
+                    ttl: 2.0
+                )
+            } catch {
+                store.showToast(
+                    title: "Sync Failed",
+                    body: error.localizedDescription,
+                    tint: Color.red,
+                    systemImage: "exclamationmark.triangle",
+                    ttl: 3.0
+                )
+            }
+        }
     }
 
     // MARK: - Trust prompt
@@ -458,6 +633,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openQuickAccess()    { showPanel(quickAccessController) }
     @objc private func openCommandPalette() { showPanel(commandPaletteController) }
     @objc private func quitApp()            { NSApp.terminate(nil) }
+    @objc private func scanDevices()        { store.scanForDevices() }
+
+    @objc private func sendFileFromMenu() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseFiles          = true
+        panel.canChooseDirectories    = false
+        panel.prompt                  = "Send"
+        panel.message                 = "Choose files to send to connected devices"
+        if panel.runModal() == .OK {
+            panel.urls.forEach { store.sendFile(url: $0, to: nil) }
+        }
+    }
+
+    @objc private func connectManually() {
+        let alert = NSAlert()
+        alert.messageText     = "Connect to Device by IP"
+        alert.informativeText = "Enter the IP address of the device running ClipRelay.\nMac IP: \(Self.localWiFiIP() ?? "unknown")"
+        alert.addButton(withTitle: "Connect")
+        alert.addButton(withTitle: "Cancel")
+
+        let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 22))
+        input.placeholderString = "192.168.x.x"
+        input.bezelStyle        = .roundedBezel
+        alert.accessoryView     = input
+        alert.window.initialFirstResponder = input
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let host = input.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !host.isEmpty else { return }
+        store.connectManual(host: host)
+    }
+
+    private static func localWiFiIP() -> String? {
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0 else { return nil }
+        defer { freeifaddrs(ifaddr) }
+        var ptr = ifaddr
+        while let addr = ptr {
+            let fa   = addr.pointee
+            let name = String(cString: fa.ifa_name)
+            if fa.ifa_addr.pointee.sa_family == UInt8(AF_INET),
+               name.hasPrefix("en") {
+                var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+                var sin = fa.ifa_addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+                inet_ntop(AF_INET, &sin.sin_addr, &buf, socklen_t(INET_ADDRSTRLEN))
+                return String(cString: buf)
+            }
+            ptr = fa.ifa_next
+        }
+        return nil
+    }
 
     // MARK: - Window factory
 
@@ -525,5 +752,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             y: visible.midY - h / 2,
             width: w, height: h
         )
+    }
+}
+
+// MARK: - MenuBarDropViewDelegate
+
+extension AppDelegate: MenuBarDropViewDelegate {
+    func menuBarDropView(_ view: MenuBarDropView, didReceiveFiles urls: [URL]) {
+        urls.forEach { store.sendFile(url: $0, to: nil) }
+        // Brief visual feedback
+        store.showToast(
+            title: "Sending \(urls.count) file\(urls.count == 1 ? "" : "s")",
+            body: urls.map(\.lastPathComponent).joined(separator: ", "),
+            tint: CRTheme.brandElectric,
+            systemImage: "arrow.up.doc.fill",
+            ttl: 3.5
+        )
+    }
+
+    func menuBarDropViewDidClick(_ view: MenuBarDropView) {
+        // Pop the menu as normal
+        statusItem.button?.performClick(nil)
     }
 }

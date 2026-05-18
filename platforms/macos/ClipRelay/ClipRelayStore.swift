@@ -173,7 +173,7 @@ final class ClipRelayStore: ObservableObject {
 
     private func schedulePollTick() {
         pollTimer?.invalidate()
-        let interval: TimeInterval = connectedCount > 0 ? 0.25 : 3.0
+        let interval: TimeInterval = connectedCount > 0 ? 0.25 : 1.0
         pollTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.refresh()
@@ -201,20 +201,37 @@ final class ClipRelayStore: ObservableObject {
                 reconnectingCount: reconnectingCount,
                 reconnectableCount: reconnectableCount
             )
-            peers = s.peers.map { makePeerViewModel($0) }
+            var seenIds = Set<String>()
+            var uniquePeers = [PeerViewModel]()
+            // Deduplicate peers by ID (handles cases where a device is discovered via both IPv4 and IPv6)
+            for p in s.peers {
+                if !seenIds.contains(p.id) {
+                    seenIds.insert(p.id)
+                    uniquePeers.append(makePeerViewModel(p))
+                }
+            }
+            peers = uniquePeers
             pendingClipboardCount = s.pending_clipboard_count ?? 0
             if let fp = s.local_fingerprint { localFingerprint = fp }
 
             // ── Call continuity: update active call state ─────────────────────
+            // Only mutate when the value actually changes — prevents SwiftUI
+            // from tearing down & rebuilding the call banner every 0.25 s,
+            // which was silently breaking button hit-testing (mouse-down and
+            // mouse-up land on different view instances when the view rebuilds
+            // between the two events).
             if let call = s.active_call, call.state.lowercased() != "idle" {
-                activeCall = IncomingCallState(
+                let incoming = IncomingCallState(
                     deviceId: call.device_id,
                     deviceName: call.device_name,
                     state: call.state,
                     phoneNumber: call.number,
                     contactName: call.contact_name
                 )
-            } else {
+                if activeCall != incoming {
+                    activeCall = incoming
+                }
+            } else if activeCall != nil {
                 activeCall = nil
             }
             dashboardStatus = StatusSnapshot(
@@ -302,6 +319,25 @@ final class ClipRelayStore: ObservableObject {
             }
         }
     }
+
+    /// Connect to a specific host IP entered by the user (e.g. from the menu bar dialog).
+    func connectManual(host: String) {
+        let addr = host.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !addr.isEmpty else { return }
+        Task {
+            do {
+                try await ipc.connectManual(address: addr)
+                showToast(title: "Connecting to \(addr)…", body: "Handshake in progress", tint: CRTheme.accentBlue)
+                try? await Task.sleep(nanoseconds: 900_000_000)
+                await refresh()
+                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                await refresh()
+            } catch {
+                showToast(title: "Connection failed", body: error.localizedDescription, tint: CRTheme.accentRed)
+            }
+        }
+    }
+
 
     func sendFile(url: URL, to device: ManagedDevice?) {
         Task { _ = try? await ipc.sendFile(url: url, targetDeviceId: device?.id) }
@@ -541,6 +577,11 @@ final class ClipRelayStore: ObservableObject {
                 if activityFeed.count > 200 { activityFeed = Array(activityFeed.prefix(200)) }
                 lastActivityId = newEntries.map(\.id).max() ?? lastActivityId
                 mirrorAutoAppliedClipboardIfNeeded(entries: newEntries)
+                
+                // Fire notifications for newly arrived items (e.g. files, clipboard)
+                for entry in newEntries {
+                    NotificationCenter.default.post(name: NSNotification.Name("clipRelayActivityReceived"), object: entry)
+                }
             }
             // Keep pendingClipboardCount in sync with local feed state.
             // This stays accurate between status() polls (which happen less often when idle).
@@ -729,20 +770,28 @@ final class ClipRelayStore: ObservableObject {
     // MARK: - Call Continuity
 
     func acceptCall() {
+        NSSound.beep()
         guard let call = activeCall else { return }
         Task {
             try? await ipc.callAction(action: "accept", targetDevice: call.deviceId)
         }
-        // Optimistically clear — the next poll will confirm.
-        withAnimation(.crSpring) { activeCall = nil }
+        // Do NOT clear — wait for 'offhook' state from Android to switch UI to ongoing call mode.
     }
 
     func declineCall() {
+        NSSound.beep()
         guard let call = activeCall else { return }
         Task {
             try? await ipc.callAction(action: "decline", targetDevice: call.deviceId)
         }
         withAnimation(.crSpring) { activeCall = nil }
+    }
+
+    func routeAudio(to route: String) {
+        guard let call = activeCall else { return }
+        Task {
+            try? await ipc.callAction(action: "audio_\(route)", targetDevice: call.deviceId)
+        }
     }
 
     // MARK: - Mapping

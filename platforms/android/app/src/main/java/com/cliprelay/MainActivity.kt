@@ -1359,7 +1359,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (items.isEmpty()) return@setOnLongClickListener false
                 val labels = items.map { it.first }.toTypedArray()
-                android.app.AlertDialog.Builder(this@MainActivity)
+                com.google.android.material.dialog.MaterialAlertDialogBuilder(this@MainActivity)
                     .setItems(labels) { _, i -> items[i].second.invoke() }
                     .show()
                 true
@@ -1798,10 +1798,68 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestNotificationPermission() {
+        val needed = mutableListOf<String>()
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
             android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+            needed += Manifest.permission.POST_NOTIFICATIONS
+        }
+
+        // READ_PHONE_STATE is required for call state monitoring (API 23+).
+        if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            needed += Manifest.permission.READ_PHONE_STATE
+        }
+
+        // READ_CONTACTS is used to resolve caller names from the address book.
+        if (checkSelfPermission(Manifest.permission.READ_CONTACTS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            needed += Manifest.permission.READ_CONTACTS
+        }
+
+        // ANSWER_PHONE_CALLS is required to accept/decline calls from the Mac.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            checkSelfPermission(Manifest.permission.ANSWER_PHONE_CALLS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            needed += Manifest.permission.ANSWER_PHONE_CALLS
+        }
+
+        if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            needed += Manifest.permission.READ_CALL_LOG
+        }
+
+        if (needed.isNotEmpty()) {
+            requestPermissions(needed.toTypedArray(), 1001)
+        }
+
+        // OnePlus/OxygenOS will kill sockets during sleep unless explicitly whitelisted
+        val pm = getSystemService(android.os.PowerManager::class.java)
+        if (pm != null && !pm.isIgnoringBatteryOptimizations(packageName)) {
+            runCatching {
+                startActivity(android.content.Intent(
+                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    android.net.Uri.parse("package:$packageName")
+                ))
+            }
+        }
+    }
+
+    // When permissions are granted at runtime, tell the service to (re-)start the call monitor.
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1001) {
+            val readPhone = permissions.indexOf(Manifest.permission.READ_PHONE_STATE)
+            if (readPhone >= 0 &&
+                grantResults[readPhone] == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                // Restart the service so it can start the call monitor now that permission is granted.
+                startService(Intent(this, ClipRelayService::class.java))
+            }
         }
     }
 }

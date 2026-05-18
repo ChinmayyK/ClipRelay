@@ -2,6 +2,7 @@
 // System Settings aesthetic: icon tabs, live dirty state, port validation, fingerprint display.
 
 import SwiftUI
+import AppKit
 
 // MARK: - Root
 
@@ -211,6 +212,7 @@ private struct PrefsFooter: View {
 
 private struct GeneralPane: View {
     @Binding var copy: ClipRelaySettingsSnapshot
+    @AppStorage("cr_app_theme") private var appTheme: String = "light"
 
     var body: some View {
         PrefsSection(title: "Identity", icon: "person.crop.circle.fill", tint: CRTheme.accentBlue) {
@@ -223,6 +225,35 @@ private struct GeneralPane: View {
                      description: "Launch ClipRelay automatically at login.") {
                 Toggle("", isOn: $copy.startOnLogin).labelsHidden()
             }
+        }
+
+        PrefsSection(title: "Appearance", icon: "circle.lefthalf.filled", tint: CRTheme.accentIndigo) {
+            PrefsRow(icon: "sun.max.fill", label: "Light",
+                     description: "Classic clean look with light backgrounds.") {
+                if appTheme == "light" {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(CRTheme.accentBlue)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { applyTheme("light") }
+            PrefsDivider()
+            PrefsRow(icon: "moon.fill", label: "True Black",
+                     description: "Deep black — ideal for dark environments.") {
+                if appTheme == "dark" {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(CRTheme.accentBlue)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { applyTheme("dark") }
+            PrefsDivider()
+            PrefsRow(icon: "circle.righthalf.filled", label: "System Default",
+                     description: "Follow macOS system appearance setting.") {
+                if appTheme == "system" {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(CRTheme.accentBlue)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { applyTheme("system") }
         }
 
         PrefsSection(title: "Notifications", icon: "bell.badge.fill", tint: CRTheme.accentPurple) {
@@ -249,6 +280,15 @@ private struct GeneralPane: View {
                         ), in: 4...512, step: 4)
                     .frame(maxWidth: 190)
             }
+        }
+    }
+
+    private func applyTheme(_ theme: String) {
+        appTheme = theme
+        switch theme {
+        case "light":  NSApp.appearance = NSAppearance(named: .aqua)
+        case "dark":   NSApp.appearance = NSAppearance(named: .darkAqua)
+        default:       NSApp.appearance = nil  // follows system
         }
     }
 }
