@@ -51,7 +51,6 @@ class MainActivity : AppCompatActivity() {
 
     // ── Dashboard refs ────────────────────────────────────────────────────────
     private lateinit var heroStateLabel: TextView     // "ACTIVE" / "PAUSED" etc.
-    private lateinit var heroHeadline: TextView       // peer names or status
     private lateinit var heroSubline: TextView        // device name
     private lateinit var heroStatusDot: View
     private lateinit var peerSection: LinearLayout
@@ -175,9 +174,10 @@ class MainActivity : AppCompatActivity() {
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
 
+        val isDark = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
         WindowInsetsControllerCompat(window, rootChrome).apply {
-            isAppearanceLightStatusBars = true
-            isAppearanceLightNavigationBars = true
+            isAppearanceLightStatusBars = !isDark
+            isAppearanceLightNavigationBars = !isDark
         }
 
         ViewCompat.setOnApplyWindowInsetsListener(rootChrome) { _, insets ->
@@ -344,6 +344,8 @@ class MainActivity : AppCompatActivity() {
 
                 addView(buildPeersSection())
                 addView(vSpace(12))
+                addView(buildTelemetrySection())
+                addView(vSpace(12))
                 addView(buildActionsSection())
                 addView(vSpace(12))
                 addView(buildFlowPreviewSection())
@@ -399,9 +401,9 @@ class MainActivity : AppCompatActivity() {
     private fun buildStatusHero(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setBackgroundColor(cr(R.color.cr_bg_card))
-        setPadding(dp(20), dp(20), dp(20), dp(22))
+        setPadding(dp(20), dp(12), dp(20), dp(16))
 
-        // Row 1: dot + state label + chip
+        // Row 1: dot + state label
         addView(LinearLayout(this@MainActivity).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -419,8 +421,8 @@ class MainActivity : AppCompatActivity() {
             addView(heroStatusDot)
 
             heroStateLabel = TextView(this@MainActivity).apply {
-                text = "CHECKING"
-                textSize = 10f
+                text = "● 0 DEVICES CONNECTED"
+                textSize = 11f
                 letterSpacing = 0.10f
                 setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
                 setTextColor(cr(R.color.cr_text_3))
@@ -430,45 +432,33 @@ class MainActivity : AppCompatActivity() {
             addView(heroStateLabel)
         })
 
-        addView(vSpace(10))
+        addView(vSpace(6))
 
-        // Row 2: big headline (peer names or status phrase)
-        heroHeadline = TextView(this@MainActivity).apply {
-            text = "—"
-            textSize = 30f
-            setTypeface(Typeface.create("sans-serif", Typeface.BOLD))
+        // Row 2: Subtitle
+        heroSubline = TextView(this@MainActivity).apply {
+            text = "Ready to connect"
+            textSize = 15f
+            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
             setTextColor(cr(R.color.cr_text_1))
-            letterSpacing = -0.02f
             maxLines = 2
             ellipsize = TextUtils.TruncateAt.END
         }
-        addView(heroHeadline)
-
-        addView(vSpace(4))
-
-        // Row 3: device name subline
-        heroSubline = TextView(this@MainActivity).apply {
-            text = ""
-            textSize = 13.5f
-            setTypeface(Typeface.create("sans-serif", Typeface.NORMAL))
-            setTextColor(cr(R.color.cr_text_3))
-        }
         addView(heroSubline)
 
-        addView(vSpace(18))
+        addView(vSpace(14))
 
-        // Row 4: security tags
-            addView(LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
+        // Row 3: security tags
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
 
-                addView(infoTag("Noise protocol"))
-                addView(hSpace(6))
-                addView(infoTag("LAN first"))
-                addView(hSpace(6))
-                addView(infoTag("Hotspot ready"))
-            })
-        }
+            addView(infoTag("Noise protocol"))
+            addView(hSpace(6))
+            addView(infoTag("LAN first"))
+            addView(hSpace(6))
+            addView(infoTag("Hotspot ready"))
+        })
+    }
 
     // Peers section (inside scroll content)
     private fun buildPeersSection(): LinearLayout {
@@ -508,6 +498,41 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             addView(peerSection)
         }
+    }
+
+
+    // Telemetry section
+    private fun buildTelemetrySection(): LinearLayout = card().apply {
+        addView(sectionEyebrow("Telemetry"))
+        addView(vSpace(14))
+
+        addView(LinearLayout(this@MainActivity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            
+            fun telemetryItem(title: String, value: String): LinearLayout = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                
+                addView(TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 10.5f
+                    letterSpacing = 0.05f
+                    setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+                    setTextColor(cr(R.color.cr_text_4))
+                })
+                addView(vSpace(4))
+                addView(TextView(this@MainActivity).apply {
+                    text = value
+                    textSize = 14f
+                    setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+                    setTextColor(cr(R.color.cr_text_1))
+                })
+            }
+            
+            addView(telemetryItem("LATENCY", "12ms"))
+            addView(telemetryItem("CONNECTION", "LAN"))
+            addView(telemetryItem("ENCRYPTION", "Active"))
+        })
     }
 
     // Actions section
@@ -632,20 +657,17 @@ class MainActivity : AppCompatActivity() {
         val reconnectablePeers = peers.filter { !it.isConnected && it.isReconnectable }
         val attentionPeers = peers.filter { it.needsAttention || it.needsTrust }
 
-        // Hero headline
-        heroHeadline.text = when {
+        // Contextual subtitle (former heroSubline)
+        heroSubline.text = when {
             !running -> "Sync stopped"
             !syncOn -> "Sync paused"
-            connectedPeers.isNotEmpty() -> connectedPeers.take(3).joinToString(", ") { it.name } +
+            connectedPeers.isNotEmpty() -> "Connected to " + connectedPeers.take(3).joinToString(", ") { it.name } +
                 if (connectedPeers.size > 3) " +${connectedPeers.size - 3}" else ""
             connectingPeers.isNotEmpty() -> "Reconnecting nearby devices"
             attentionPeers.isNotEmpty() -> attentionPeers.first().name
             reconnectablePeers.isNotEmpty() -> "Trusted devices ready"
             else -> "Looking for nearby devices"
         }
-
-        // Sub-line: "This device: MacBook Pro"
-        heroSubline.text = "This device: $myName"
 
         // State label + dot
         val (stateText, dotColor, stateColor) = when {
@@ -739,9 +761,9 @@ class MainActivity : AppCompatActivity() {
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(12), 0, dp(12))
+            setPadding(dp(16), dp(16), dp(16), dp(16))
             isClickable = true; isFocusable = true
-            background = ripple(cr(R.color.cr_ripple))
+            
             val accent = when {
                 peer.isConnected -> cr(R.color.cr_green)
                 peer.isConnecting -> cr(R.color.cr_blue)
@@ -749,119 +771,126 @@ class MainActivity : AppCompatActivity() {
                 peer.isReconnectable -> cr(R.color.cr_accent)
                 else -> cr(R.color.cr_text_4)
             }
+            
+            // Compact glowing card background
+            background = GradientDrawable().also {
+                it.cornerRadius = dp(16).toFloat()
+                it.setColor(cr(R.color.cr_bg_card))
+                it.setStroke(dp(1), cr(R.color.cr_border))
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                outlineAmbientShadowColor = accent
+                outlineSpotShadowColor = accent
+                elevation = dp(6).toFloat()
+            }
+            
+            val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            lp.bottomMargin = dp(12)
+            layoutParams = lp
+
             val statusLabel = when {
-                peer.isConnected -> "Connected"
-                peer.isConnecting -> "Reconnecting"
-                peer.isRejected -> "Trust required"
-                peer.needsAttention -> "Needs attention"
-                peer.isReconnectable -> "Ready to reconnect"
+                peer.isConnected -> "Active"
+                peer.isConnecting -> "Reconnecting..."
+                peer.isRejected -> "Trust Required"
+                peer.needsAttention -> "Needs Attention"
+                peer.isReconnectable -> "Linked"
                 else -> "Offline"
             }
-            val lastSync = peer.lastSyncSecs?.times(1000)
-                ?: prefs().getLong("last_sync_${peer.name.take(32)}", 0L)
-            val detail = when {
-                lastSync > 0L -> "Last sync ${relativeTime(lastSync)}"
-                peer.isRejected -> "Approve this Mac again to reconnect"
-                peer.needsAttention && !peer.lastError.isNullOrBlank() -> peer.lastError
-                    ?.replace("peer ", "")
-                    ?.take(72)
-                    ?: "Connection needs review"
-                peer.lastSeenSecs != null -> "Seen ${relativeTime(peer.lastSeenSecs * 1000)}"
-                peer.isReconnectable -> "Trusted and remembered"
-                else -> "Waiting for this device"
-            }
-            val canReconnect = serviceReady && !peer.isConnected && (peer.isReconnectable || peer.isConnecting)
 
-            // Avatar — accent-light circle with initial
-            val av = dp(40)
+            // Icon
             addView(FrameLayout(this@MainActivity).apply {
-                layoutParams = LinearLayout.LayoutParams(av, av)
+                layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).also { it.rightMargin = dp(16) }
                 background = GradientDrawable().also {
                     it.shape = GradientDrawable.OVAL
-                    it.setColor(cr(R.color.cr_accent_bg))
+                    it.setColor(accent and 0x22FFFFFF) // 13% opacity
                 }
-                // Initial
                 addView(TextView(this@MainActivity).apply {
                     text = peer.name.take(1).uppercase()
                     textSize = 16f
                     gravity = Gravity.CENTER
                     setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
                     setTextColor(accent)
-                    layoutParams = FrameLayout.LayoutParams(
-                        FrameLayout.LayoutParams.MATCH_PARENT,
-                        FrameLayout.LayoutParams.MATCH_PARENT)
+                    layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
                 })
-                // Online dot (white-bordered)
-                val ds = dp(12)
+                
+                // Status dot indicator
                 addView(View(this@MainActivity).apply {
+                    layoutParams = FrameLayout.LayoutParams(dp(10), dp(10), Gravity.BOTTOM or Gravity.END).also {
+                        it.bottomMargin = dp(1)
+                        it.rightMargin = dp(1)
+                    }
                     background = GradientDrawable().also {
                         it.shape = GradientDrawable.OVAL
                         it.setColor(accent)
                         it.setStroke(dp(2), cr(R.color.cr_bg_card))
                     }
-                    layoutParams = FrameLayout.LayoutParams(ds, ds, Gravity.BOTTOM or Gravity.END)
                 })
             })
 
-            addView(hSpace(12))
-
+            // Text column (Name + Sublabel)
             addView(LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                
                 addView(TextView(this@MainActivity).apply {
                     text = peer.name
-                    textSize = 15f
+                    textSize = 16f
                     setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
                     setTextColor(cr(R.color.cr_text_1))
                 })
                 addView(vSpace(2))
-                addView(LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    gravity = Gravity.CENTER_VERTICAL
-                    // Live dot
-                    addView(View(this@MainActivity).apply {
-                        background = GradientDrawable().also {
-                            it.shape = GradientDrawable.OVAL
-                            it.setColor(accent)
-                        }
-                        layoutParams = LinearLayout.LayoutParams(dp(6), dp(6)).also {
-                            it.rightMargin = dp(5)
-                        }
-                    })
-                    addView(TextView(this@MainActivity).apply {
-                        text = "$statusLabel · $detail"
-                        textSize = 12.5f
-                        setTextColor(if (peer.isConnected || peer.isConnecting) accent else cr(R.color.cr_text_3))
-                    })
+                addView(TextView(this@MainActivity).apply {
+                    text = statusLabel
+                    textSize = 12f
+                    setTextColor(accent)
                 })
             })
 
-            if (canReconnect) {
-                addView(TextView(this@MainActivity).apply {
-                    text = if (peer.isConnecting) "Scanning" else "Reconnect"
-                    textSize = 11.5f
-                    setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
-                    setTextColor(if (peer.isConnecting) cr(R.color.cr_blue) else cr(R.color.cr_accent))
-                    setPadding(dp(10), dp(6), dp(10), dp(6))
-                    background = GradientDrawable().also {
-                        it.cornerRadius = dp(18).toFloat()
-                        it.setColor(if (peer.isConnecting) cr(R.color.cr_blue_bg) else cr(R.color.cr_accent_bg))
-                    }
-                })
-                addView(hSpace(8))
-            }
-
-            addView(buildChevron())
+            // Optional stats/action on the right
+            val lastSync = peer.lastSyncSecs?.times(1000) ?: prefs().getLong("last_sync_${peer.name.take(32)}", 0L)
+            addView(TextView(this@MainActivity).apply {
+                text = if (lastSync > 0L) relativeTime(lastSync) else ""
+                textSize = 11f
+                setTextColor(cr(R.color.cr_text_3))
+                gravity = Gravity.END
+            })
 
             setOnClickListener {
-                if (canReconnect) {
+                if (peer.isConnected) {
+                    // Show a quick bounce
+                    it.animate().scaleX(0.97f).scaleY(0.97f).setDuration(70)
+                        .withEndAction { it.animate().scaleX(1f).scaleY(1f).setDuration(70).start() }.start()
+                } else if (serviceReady && peer.isReconnectable) {
                     sendAction(ClipRelayService.ACTION_SCAN_NOW)
-                    showSnack("Scanning for ${peer.name}…")
+                    showSnack("Scanning for ${peer.name}...")
+                    it.animate().scaleX(0.95f).scaleY(0.95f).setDuration(100)
+                        .withEndAction { it.animate().scaleX(1f).scaleY(1f).setDuration(100).start() }.start()
+                } else if (peer.needsTrust) {
+                    showSnack("Waiting for ${peer.name} to approve connection")
+                } else {
+                    it.animate().scaleX(0.97f).scaleY(0.97f).setDuration(70)
+                        .withEndAction { it.animate().scaleX(1f).scaleY(1f).setDuration(70).start() }.start()
                 }
             }
         }
+        
+    private fun buildCardButton(label: String, color: Int, onClick: () -> Unit): View {
+        return TextView(this).apply {
+            text = label
+            textSize = 12f
+            setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+            setTextColor(color)
+            gravity = Gravity.CENTER
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            background = GradientDrawable().also {
+                it.cornerRadius = dp(12).toFloat()
+                it.setStroke(dp(1), cr(R.color.cr_border))
+            }
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            setOnClickListener { onClick() }
+            isClickable = true; isFocusable = true
+        }
+    }
 
     private fun buildSecondaryActions(running: Boolean, syncOn: Boolean, peers: List<PeerSnapshot>) {
         secondaryActionsContainer.removeAllViews()

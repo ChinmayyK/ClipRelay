@@ -146,6 +146,22 @@ pub enum EngineEvent {
     ActivityFeedUpdated {
         entries: Vec<crate::activity::ActivityEntry>,
     },
+    /// A connected Android device reported a phone call state change.
+    /// Used by macOS to show an incoming-call banner; by Android to update UI.
+    CallStateChanged {
+        from_device: Uuid,
+        from_name: String,
+        /// "ringing", "offhook", "idle"
+        state: String,
+        number: String,
+        contact_name: String,
+    },
+    /// A remote peer requested a call action (accept/decline).
+    /// Consumed by the Android JNI layer to invoke TelecomManager APIs.
+    CallActionRequest {
+        action: String,
+        from_device: Uuid,
+    },
     Warning(String),
 }
 
@@ -258,6 +274,18 @@ enum DiscoveryCommand {
     Rescan,
 }
 
+/// Active phone call state tracked by the engine.
+/// Updated when a connected Android device reports call state changes.
+/// Exposed in the IPC status response so macOS can poll it.
+#[derive(Debug, Clone, Serialize)]
+pub struct ActiveCallState {
+    pub device_id: Uuid,
+    pub device_name: String,
+    pub state: String,
+    pub number: String,
+    pub contact_name: String,
+}
+
 #[derive(Clone)]
 struct EngineShared {
     config: EngineConfig,
@@ -290,6 +318,8 @@ struct EngineShared {
     history: Arc<Mutex<crate::history::History>>,
     /// In-memory feedback event log (most-recent N events).
     feedback: Arc<Mutex<crate::engine_support::FeedbackLog>>,
+    /// Active phone call state (set on ringing/offhook, cleared on idle).
+    active_call: Arc<Mutex<Option<ActiveCallState>>>,
 }
 
 pub struct Engine {
@@ -368,6 +398,7 @@ impl Engine {
                 )
             })),
             feedback: Arc::new(Mutex::new(crate::engine_support::FeedbackLog::new(200))),
+            active_call: Arc::new(Mutex::new(None)),
         };
 
         spawn_listener_supervisor(shared.clone(), listener_rx);
@@ -398,6 +429,48 @@ impl Engine {
         engine.spawn_peer_pruner();
         engine.spawn_sensitive_history_pruner();
         Ok(engine)
+    }
+
+    // ── Call Continuity ───────────────────────────────────────────────────────
+
+    /// Push a phone call state change to all connected, trusted peers.
+    /// Called by the Android JNI layer when PhoneStateListener fires.
+    pub async fn push_call_state(&self, state: String, number: String, contact_name: String) {
+        let msg = AppMessage::CallStateUpdate {
+            state,
+            number,
+            contact_name,
+            origin_device: self.shared.config.device_id,
+            origin_device_name: self.shared.config.device_name.clone(),
+        };
+
+        let peers = self.shared.peer_manager.active_senders();
+        for (peer_id, tx) in peers {
+            let Some(peer) = self.shared.peer_manager.get(peer_id) else { continue };
+            if !peer.trusted { continue; }
+            let _ = tx.send(msg.clone()).await;
+        }
+    }
+
+    /// Send an accept/decline call action to a specific Android peer.
+    /// Called by the macOS IPC layer when the user taps Accept or Decline.
+    pub async fn send_call_action(&self, action: String, target_device: Uuid) {
+        let msg = AppMessage::CallAction {
+            action,
+            origin_device: self.shared.config.device_id,
+        };
+
+        let peers = self.shared.peer_manager.active_senders();
+        for (peer_id, tx) in peers {
+            if peer_id != target_device { continue; }
+            let _ = tx.send(msg.clone()).await;
+        }
+    }
+
+    /// Get the current active phone call state, if any.
+    /// Returns None when no call is in progress.
+    pub async fn active_call(&self) -> Option<ActiveCallState> {
+        self.shared.active_call.lock().await.clone()
     }
 
     pub async fn push_clipboard(&self, content: ClipboardContent) -> usize {
@@ -1855,7 +1928,7 @@ fn display_peers_for_status(
     local_device_name: &str,
     local_ip: IpAddr,
 ) -> Vec<PeerRecord> {
-    let mut deduped: HashMap<(String, Option<IpAddr>), PeerRecord> = HashMap::new();
+    let mut deduped: HashMap<Uuid, PeerRecord> = HashMap::new();
 
     for peer in peers {
         if is_obviously_local_peer(
@@ -1869,7 +1942,7 @@ fn display_peers_for_status(
             continue;
         }
 
-        let key = (peer.friendly_name.trim().to_lowercase(), peer.ip);
+        let key = peer.id;
         match deduped.get(&key) {
             Some(existing) if !peer_should_replace(existing, &peer) => {}
             _ => {
@@ -2686,7 +2759,43 @@ fn register_session(
                                     .record(result);
                             }
                         }
+                        Ok(AppMessage::CallStateUpdate {
+                            state, number, contact_name,
+                            origin_device, origin_device_name,
+                        }) => {
+                            last_seen = Instant::now();
+                            // Persist in shared state for IPC status polling.
+                            {
+                                let mut call = shared.active_call.lock().await;
+                                if state == "idle" {
+                                    *call = None;
+                                } else {
+                                    *call = Some(ActiveCallState {
+                                        device_id: origin_device,
+                                        device_name: origin_device_name.clone(),
+                                        state: state.clone(),
+                                        number: number.clone(),
+                                        contact_name: contact_name.clone(),
+                                    });
+                                }
+                            }
+                            let _ = shared.event_tx.send(EngineEvent::CallStateChanged {
+                                from_device: origin_device,
+                                from_name: origin_device_name,
+                                state,
+                                number,
+                                contact_name,
+                            }).await;
+                        }
+                        Ok(AppMessage::CallAction { action, origin_device }) => {
+                            last_seen = Instant::now();
+                            let _ = shared.event_tx.send(EngineEvent::CallActionRequest {
+                                action,
+                                from_device: origin_device,
+                            }).await;
+                        }
                         Ok(AppMessage::Bye) => {
+                            let _ = shared.peer_manager.set_explicit_disconnect(peer_id, true);
                             break "peer closed session".to_string();
                         }
                         Err(err) => {

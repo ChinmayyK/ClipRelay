@@ -89,9 +89,9 @@ if [[ -f "${ICON_SRC}" ]]; then
     ICONSET_DIR="${ICON_TMP_DIR}/AppIcon.iconset"
     mkdir -p "${ICONSET_DIR}"
     for size in 16 32 128 256 512; do
-        sips -z "${size}" "${size}" "${ICON_SRC}" --out "${ICONSET_DIR}/icon_${size}x${size}.png" >/dev/null
+        sips -s format png -z "${size}" "${size}" "${ICON_SRC}" --out "${ICONSET_DIR}/icon_${size}x${size}.png" >/dev/null
         retina_size=$((size * 2))
-        sips -z "${retina_size}" "${retina_size}" "${ICON_SRC}" --out "${ICONSET_DIR}/icon_${size}x${size}@2x.png" >/dev/null
+        sips -s format png -z "${retina_size}" "${retina_size}" "${ICON_SRC}" --out "${ICONSET_DIR}/icon_${size}x${size}@2x.png" >/dev/null
     done
     iconutil -c icns "${ICONSET_DIR}" -o "${APP_BUNDLE}/Contents/Resources/AppIcon.icns"
     rm -rf "${ICON_TMP_DIR}"

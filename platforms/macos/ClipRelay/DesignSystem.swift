@@ -21,6 +21,11 @@ extension Color {
             blue:  Double(hex         & 0xFF) / 255,
             opacity: opacity)
     }
+    
+    // Helper to force light mode aesthetic while keeping the API
+    init(lightOnly hex: UInt32, opacity: Double = 1) {
+        self.init(hex: hex, opacity: opacity)
+    }
 }
 
 // MARK: - CRTheme
@@ -28,104 +33,92 @@ extension Color {
 enum CRTheme {
 
     // ── Brand ─────────────────────────────────────────────────────────────────
-    static let brandElectric = Color(hex: 0x315F8C)
-    static let brandViolet   = Color(hex: 0x6B728A)
-    static let brandCyan     = Color(hex: 0x9CB3CC)
+    static let brandElectric = Color(hex: 0x0066FF) // Vibrant, bright blue
+    static let brandViolet   = Color(hex: 0x8B5CF6) // Soft violet
+    static let brandCyan     = Color(hex: 0x06B6D4) // Bright cyan
+    static let brandPink     = Color(hex: 0xEC4899) // Soft pink
 
-    // ── Sidebar — fully adaptive ───────────────────────────────────────────────
-    static var sidebarBase: Color {
-        Color(light: Color(hex: 0xECE6DD), dark: Color(hex: 0x11161B))
-    }
-    static var sidebarMid: Color {
-        Color(light: Color(hex: 0xE1DACE), dark: Color(hex: 0x171E25))
-    }
-    static var sidebarTop: Color {
-        Color(light: Color(hex: 0xF4F0E8), dark: Color(hex: 0x1D2730))
-    }
+    // ── Sidebar — Light, airy glassmorphism ────────────────────────────────────
+    static var sidebarBase: Color { Color(light: Color(hex: 0xF8FAFC, opacity: 0.85), dark: Color(hex: 0x000000, opacity: 0.85)) }
+    static var sidebarMid: Color  { Color(light: Color(hex: 0xF1F5F9, opacity: 0.80), dark: Color(hex: 0x000000, opacity: 0.80)) }
+    static var sidebarTop: Color  { Color(light: Color(hex: 0xFFFFFF, opacity: 0.75), dark: Color(hex: 0x000000, opacity: 0.75)) }
 
     /// Primary foreground for text/icons drawn on the sidebar surface
-    static var sidebarInk: Color {
-        Color(light: Color(hex: 0x1B1A17), dark: Color(white: 1, opacity: 0.96))
-    }
+    static var sidebarInk: Color { Color(light: Color(hex: 0x0F172A), dark: Color(hex: 0xFFFFFF)) }
+    
     /// Secondary / de-emphasised sidebar text
-    static var sidebarInkSoft: Color {
-        Color(light: Color(hex: 0x6C655C), dark: Color(white: 1, opacity: 0.52))
-    }
+    static var sidebarInkSoft: Color { Color(light: Color(hex: 0x475569), dark: Color(hex: 0xA1A1AA)) }
+    
     /// Very muted sidebar text (timestamps, hints)
-    static var sidebarInkSubtle: Color {
-        Color(light: Color(hex: 0x978D80), dark: Color(white: 1, opacity: 0.30))
-    }
+    static var sidebarInkSubtle: Color { Color(light: Color(hex: 0x94A3B8), dark: Color(hex: 0x71717A)) }
+    
     /// Subtle separator for use inside the sidebar
-    static var sidebarDivider: Color {
-        Color(light: Color(hex: 0xCEC4B7).opacity(0.9), dark: Color(white: 1, opacity: 0.08))
-    }
+    static var sidebarDivider: Color { Color(light: Color(hex: 0xE2E8F0, opacity: 0.8), dark: Color(hex: 0xFFFFFF, opacity: 0.1)) }
+    
     /// Selected nav-button pill fill
-    static var sidebarSelectedFill: Color {
-        Color(light: Color(hex: 0xF7F4ED).opacity(0.96), dark: Color(hex: 0x22303A).opacity(0.92))
-    }
+    static var sidebarSelectedFill: Color { Color(light: Color(hex: 0xFFFFFF, opacity: 0.95), dark: Color(hex: 0xFFFFFF, opacity: 0.12)) }
+    
     /// Hovered nav-button pill fill
-    static var sidebarHoverFill: Color {
-        Color(light: Color(hex: 0x000000).opacity(0.035), dark: Color(white: 1, opacity: 0.05))
-    }
+    static var sidebarHoverFill: Color { Color(light: Color(hex: 0x000000, opacity: 0.03), dark: Color(hex: 0xFFFFFF, opacity: 0.05)) }
+    
     /// Selected nav-button border
-    static var sidebarSelectedStroke: Color {
-        Color(light: Color(hex: 0xC8BFB3).opacity(0.96), dark: Color(hex: 0x3E5561).opacity(0.96))
-    }
-    static var sidebarSelectedInk: Color {
-        Color(light: Color(hex: 0x181613), dark: Color(white: 1, opacity: 0.97))
-    }
-    static var sidebarSelectedAccent: Color {
-        Color(light: Color(hex: 0x244B72), dark: Color(hex: 0xC0D3E6))
-    }
+    static var sidebarSelectedStroke: Color { Color(light: Color(hex: 0xE2E8F0, opacity: 0.9), dark: Color(hex: 0xFFFFFF, opacity: 0.15)) }
+    
+    static var sidebarSelectedInk: Color { Color(light: Color(hex: 0x0F172A), dark: Color(hex: 0xFFFFFF)) }
+    static var sidebarSelectedAccent: Color { brandElectric }
     /// Stat-pill fill inside footer
-    static var sidebarPillFill: Color {
-        Color(light: Color(hex: 0x000000).opacity(0.04), dark: Color(white: 1, opacity: 0.05))
-    }
-    static var sidebarPillStroke: Color {
-        Color(light: Color(hex: 0x000000).opacity(0.06), dark: Color(white: 1, opacity: 0.08))
-    }
+    static var sidebarPillFill: Color { Color(light: Color(hex: 0xF1F5F9), dark: Color(hex: 0xFFFFFF, opacity: 0.08)) }
+    static var sidebarPillStroke: Color { Color(light: Color(hex: 0xE2E8F0), dark: Color(hex: 0xFFFFFF, opacity: 0.15)) }
 
     // ── Canvas ────────────────────────────────────────────────────────────────
-    static var canvasTop:    Color { Color(light: Color(hex: 0xF4F0E8), dark: Color(hex: 0x12171C)) }
-    static var canvasBottom: Color { Color(light: Color(hex: 0xE9E2D6), dark: Color(hex: 0x0E1318)) }
+    static var canvasTop:    Color { Color(light: Color(hex: 0xFFFFFF), dark: Color(hex: 0x000000)) }
+    static var canvasBottom: Color { Color(light: Color(hex: 0xF8FAFC), dark: Color(hex: 0x000000)) }
 
     // ── Semantic surfaces ─────────────────────────────────────────────────────
-    static var surface:         Color { Color(nsColor: .controlBackgroundColor) }
-    static var surfaceStrong:   Color { Color(nsColor: .textBackgroundColor) }
-    static var surfaceElevated: Color { Color(nsColor: .windowBackgroundColor) }
+    static var surface:         Color { Color(light: Color(hex: 0xFFFFFF), dark: Color(hex: 0x000000)) }
+    static var surfaceStrong:   Color { Color(light: Color(hex: 0xF8FAFC), dark: Color(hex: 0x09090B)) }
+    static var surfaceElevated: Color { Color(light: Color(hex: 0xFFFFFF, opacity: 0.95), dark: Color(hex: 0x000000, opacity: 0.95)) }
 
     // ── Row states ────────────────────────────────────────────────────────────
-    static var rowHover:    Color { Color(light: .black.opacity(0.040), dark: .white.opacity(0.050)) }
-    static var rowSelected: Color { Color(light: .black.opacity(0.072), dark: .white.opacity(0.082)) }
+    static var rowHover:    Color { Color(light: Color(hex: 0xF1F5F9), dark: Color(hex: 0xFFFFFF, opacity: 0.05)) }
+    static var rowSelected: Color { Color(light: Color(hex: 0xE2E8F0), dark: Color(hex: 0xFFFFFF, opacity: 0.10)) }
 
     // ── System accent palette ─────────────────────────────────────────────────
-    static let accentBlue   = Color(hex: 0x315F8C)
-    static let accentGreen  = Color(hex: 0x2D7B58)
-    static let accentYellow = Color(hex: 0xD3AB49)
-    static let accentOrange = Color(hex: 0xB77833)
-    static let accentRed    = Color(hex: 0xB65348)
-    static let accentPurple = Color(hex: 0x7B667B)
-    static let accentIndigo = Color(hex: 0x5B6D89)
-    static let accentTeal   = Color(hex: 0x2F7C7A)
-    static let accentMint   = Color(hex: 0x3B8C72)
-    static let accentPink   = Color(hex: 0xB96874)
-    static let accentGold   = Color(hex: 0xC39A3F)
+    static let accentBlue   = Color(hex: 0x3B82F6)
+    static let accentGreen  = Color(hex: 0x10B981)
+    static let accentYellow = Color(hex: 0xF59E0B)
+    static let accentOrange = Color(hex: 0xF97316)
+    static let accentRed    = Color(hex: 0xEF4444)
+    static let accentPurple = Color(hex: 0x8B5CF6)
+    static let accentIndigo = Color(hex: 0x6366F1)
+    static let accentTeal   = Color(hex: 0x14B8A6)
+    static let accentMint   = Color(hex: 0x34D399)
+    static let accentPink   = Color(hex: 0xEC4899)
+    static let accentGold   = Color(hex: 0xEAB308)
 
     // ── Text ──────────────────────────────────────────────────────────────────
-    static var ink:       Color { Color(nsColor: .labelColor) }
-    static var inkSoft:   Color { Color(nsColor: .secondaryLabelColor) }
-    static var inkSubtle: Color { Color(nsColor: .tertiaryLabelColor) }
-    static var inkFaint:  Color { Color(nsColor: .quaternaryLabelColor) }
+    static var ink:       Color { Color(light: Color(hex: 0x0F172A), dark: Color(hex: 0xFFFFFF)) }
+    static var inkSoft:   Color { Color(light: Color(hex: 0x475569), dark: Color(hex: 0xA1A1AA)) }
+    static var inkSubtle: Color { Color(light: Color(hex: 0x64748B), dark: Color(hex: 0x71717A)) }
+    static var inkFaint:  Color { Color(light: Color(hex: 0x94A3B8), dark: Color(hex: 0x52525B)) }
 
     // ── Borders ───────────────────────────────────────────────────────────────
-    static var stroke:     Color { Color(nsColor: .separatorColor) }
-    static var strokeSoft: Color { Color(nsColor: .separatorColor).opacity(0.35) }
+    static var stroke:     Color { Color(light: Color(hex: 0xE2E8F0), dark: Color(hex: 0xFFFFFF, opacity: 0.15)) }
+    static var strokeSoft: Color { Color(light: Color(hex: 0xF1F5F9), dark: Color(hex: 0xFFFFFF, opacity: 0.08)) }
 
     // ── Gradients ─────────────────────────────────────────────────────────────
     static var brandGradient: LinearGradient {
-        LinearGradient(colors: [brandElectric, brandCyan],
+        LinearGradient(colors: [brandElectric, brandViolet],
                        startPoint: .topLeading, endPoint: .bottomTrailing)
     }
+    
+    static var cardGradient: LinearGradient {
+        LinearGradient(colors: [
+            Color(light: Color(hex: 0xFFFFFF, opacity: 0.88), dark: Color(hex: 0x18181B, opacity: 0.6)),
+            Color(light: Color(hex: 0xF8FAFC, opacity: 0.50), dark: Color(hex: 0x09090B, opacity: 0.4))
+        ], startPoint: .topLeading, endPoint: .bottomTrailing)
+    }
+    
     static var canvasGradient: LinearGradient {
         LinearGradient(colors: [canvasTop, canvasBottom],
                        startPoint: .topLeading, endPoint: .bottomTrailing)
@@ -134,9 +127,9 @@ enum CRTheme {
     static var sidebarOverlay: LinearGradient {
         LinearGradient(
             stops: [
-                .init(color: sidebarTop.opacity(0.82),  location: 0.0),
-                .init(color: sidebarMid.opacity(0.87),  location: 0.5),
-                .init(color: sidebarBase.opacity(0.92), location: 1.0)
+                .init(color: sidebarTop.opacity(0.85),  location: 0.0),
+                .init(color: sidebarMid.opacity(0.80),  location: 0.5),
+                .init(color: sidebarBase.opacity(0.70), location: 1.0)
             ],
             startPoint: .topLeading, endPoint: .bottomTrailing
         )
@@ -157,9 +150,9 @@ typealias PBTheme = CRTheme
 
 enum CRDensityMode {
     case compact, comfortable
-    var rowPadding:  CGFloat { self == .compact ? 8  : 12 }
-    var cardSpacing: CGFloat { self == .compact ? 4  : 7  }
-    var cardRadius:  CGFloat { self == .compact ? 9  : 11 }
+    var rowPadding:  CGFloat { self == .compact ? 10 : 16 }
+    var cardSpacing: CGFloat { self == .compact ? 6  : 10 }
+    var cardRadius:  CGFloat { self == .compact ? 14 : 24 }
 }
 
 // MARK: - Animation
@@ -213,15 +206,15 @@ private struct CRCardModifier: ViewModifier {
         content
             .background {
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .fill(CRTheme.surfaceStrong)
+                    .fill(CRTheme.cardGradient)
                     .overlay {
                         RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                             .strokeBorder(
-                                highlighted ? accentColor.opacity(0.36) : CRTheme.stroke.opacity(0.40),
-                                lineWidth: 0.5)
+                                highlighted ? accentColor.opacity(0.50) : CRTheme.stroke,
+                                lineWidth: highlighted ? 1.0 : 0.5)
                     }
-                    .shadow(color: .black.opacity(highlighted ? 0.10 : 0.04),
-                            radius: highlighted ? 14 : 5, x: 0, y: highlighted ? 4 : 1)
+                    .shadow(color: highlighted ? accentColor.opacity(0.15) : Color(hex: 0x0F172A).opacity(0.04),
+                            radius: highlighted ? 18 : 12, x: 0, y: highlighted ? 6 : 4)
             }
     }
 }
@@ -320,8 +313,8 @@ struct GlowModifier: ViewModifier {
     var color: Color; var radius: CGFloat
     func body(content: Content) -> some View {
         content
-            .shadow(color: color.opacity(0.48), radius: radius / 2)
-            .shadow(color: color.opacity(0.20), radius: radius)
+            .shadow(color: color.opacity(0.35), radius: radius / 1.5, y: radius / 3)
+            .shadow(color: color.opacity(0.15), radius: radius * 1.5, y: radius / 2)
     }
 }
 extension View {
@@ -625,7 +618,10 @@ struct SidebarNavButton: View {
     @State private var hovered = false
 
     var body: some View {
-        Button(action: action) {
+        Button(action: {
+            if !isSelected { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default) }
+            action()
+        }) {
             HStack(spacing: 8) {
                 Image(systemName: isSelected ? (icon + ".fill") : icon)
                     .font(.system(size: 13.5, weight: isSelected ? .semibold : .regular))

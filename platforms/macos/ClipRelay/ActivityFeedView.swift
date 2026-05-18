@@ -209,17 +209,20 @@ private struct FeedEmptyState: View {
 private struct PendingClipboardBanner: View {
     let items: [IpcActivityEntry]
     @EnvironmentObject var store: ClipRelayStore
+    @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 14) {
             ZStack {
-                Circle().fill(CRTheme.brandElectric.opacity(0.10)).frame(width: 30, height: 30)
+                Circle().fill(CRTheme.brandElectric.opacity(0.15)).frame(width: 36, height: 36)
                 Image(systemName: "doc.on.clipboard.fill")
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(CRTheme.brandElectric)
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(CRTheme.brandElectric)
             }
-            VStack(alignment: .leading, spacing: 2) {
+            .shadow(color: CRTheme.brandElectric.opacity(0.3), radius: 8, x: 0, y: 2)
+
+            VStack(alignment: .leading, spacing: 4) {
                 Text("\(items.count) pending clipboard item\(items.count == 1 ? "" : "s")")
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(CRTheme.ink)
+                    .font(.system(size: 13, weight: .bold)).foregroundStyle(CRTheme.ink)
                 if let first = items.first {
                     Text("Latest from \(first.device_name)")
                         .font(.system(size: 11.5)).foregroundStyle(CRTheme.inkSoft)
@@ -227,12 +230,24 @@ private struct PendingClipboardBanner: View {
             }
             Spacer()
             Button("Apply Latest") {
+                NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
                 if let first = items.first { Task { await store.applyClipboard(entry: first) } }
             }
             .buttonStyle(CRPrimaryButtonStyle(tint: CRTheme.brandElectric))
         }
-        .padding(.horizontal, 13).padding(.vertical, 10)
-        .background(CRTheme.brandElectric.opacity(0.04))
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isHovered ? CRTheme.surfaceElevated : CRTheme.brandElectric.opacity(0.04))
+                .shadow(color: .black.opacity(isHovered ? 0.05 : 0), radius: 10, y: 4)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(isHovered ? CRTheme.stroke : CRTheme.brandElectric.opacity(0.15), lineWidth: 0.5)
+                }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .onHover { isHovered = $0 }
+        .animation(.crFast, value: isHovered)
     }
 }
 
@@ -248,41 +263,52 @@ struct ActivityEntryRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 11) {
-            // Kind icon
+        HStack(alignment: .top, spacing: 14) {
+            // Kind icon with glow
             ZStack {
-                Circle().fill(kindColor.opacity(0.10)).frame(width: 30, height: 30)
+                Circle().fill(kindColor.opacity(0.12)).frame(width: 36, height: 36)
                 Image(systemName: kindIcon)
-                    .font(.system(size: 12.5, weight: .semibold))
+                    .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(kindColor).symbolRenderingMode(.hierarchical)
             }
-            .padding(.top, 1)
+            .padding(.top, 2)
+            .shadow(color: kindColor.opacity(0.3), radius: 8, x: 0, y: 2)
 
             // Content
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 6) {
                 // Header line
                 HStack(spacing: 0) {
                     Text(entry.device_name)
-                        .font(.system(size: 12.5, weight: .semibold)).foregroundStyle(CRTheme.ink)
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(CRTheme.ink)
                     Text("  ·  ").foregroundStyle(CRTheme.inkFaint).font(.system(size: 10))
                     Text(formattedTime(entry.timestamp_ms))
-                        .font(.system(size: 11.5)).foregroundStyle(CRTheme.inkSoft)
+                        .font(.system(size: 12)).foregroundStyle(CRTheme.inkSoft)
                     Spacer(minLength: 0)
                 }
 
                 // Summary
                 Text(entry.summary)
-                    .font(.system(size: 12.5)).foregroundStyle(CRTheme.ink)
+                    .font(.system(size: 13.5)).foregroundStyle(CRTheme.ink)
                     .lineLimit(isExpanded ? nil : 2)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 2)
 
-                // Relay path
+                // Relay path visualization
                 if !entry.relay_path.isEmpty {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.triangle.branch")
-                            .font(.system(size: 9)).foregroundStyle(CRTheme.inkSubtle)
-                        Text(entry.relay_path.joined(separator: " → "))
-                            .font(.system(size: 10.5)).foregroundStyle(CRTheme.inkSubtle)
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.uturn.right")
+                            .font(.system(size: 10, weight: .semibold)).foregroundStyle(CRTheme.brandElectric)
+                        
+                        HStack(spacing: 4) {
+                            ForEach(Array(entry.relay_path.enumerated()), id: \.offset) { idx, node in
+                                Text(node).font(.system(size: 11, weight: .medium)).foregroundStyle(CRTheme.inkSoft)
+                                if idx < entry.relay_path.count - 1 {
+                                    Image(systemName: "chevron.right").font(.system(size: 8)).foregroundStyle(CRTheme.inkFaint)
+                                }
+                            }
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Capsule().fill(CRTheme.surfaceStrong))
                     }
                 }
 
@@ -290,28 +316,32 @@ struct ActivityEntryRow: View {
                 if isExpanded, let preview = entry.text_preview, !preview.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         Text(preview)
-                            .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(CRTheme.ink)
-                            .padding(.horizontal, 9).padding(.vertical, 7)
+                            .font(.system(size: 11.5, design: .monospaced)).foregroundStyle(CRTheme.ink)
+                            .padding(.horizontal, 12).padding(.vertical, 10)
                     }
                     .background {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(CRTheme.surface)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(CRTheme.surfaceElevated)
                             .overlay {
-                                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    .strokeBorder(CRTheme.stroke.opacity(0.40), lineWidth: 0.5)
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .strokeBorder(CRTheme.stroke.opacity(0.50), lineWidth: 0.5)
                             }
                     }
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .padding(.vertical, 4)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
                 }
 
                 // Kind tag + expand hint
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     CRTag(text: kindLabel, tint: kindColor)
                     if entry.text_preview != nil {
                         Button(isExpanded ? "Collapse" : "Expand") { onToggleExpand() }
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(CRTheme.inkSoft)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(CRTheme.brandElectric)
                             .buttonStyle(.plain)
+                            .padding(.horizontal, 8).padding(.vertical, 4)
+                            .background(Capsule().fill(CRTheme.brandElectric.opacity(0.1)))
+                            .contentShape(Rectangle())
                     }
                 }
             }
@@ -323,72 +353,70 @@ struct ActivityEntryRow: View {
             VStack(alignment: .trailing, spacing: 4) {
                 if entry.isApplicable {
                     Button {
+                        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
                         applying = true
                         Task { await store.applyClipboard(entry: entry); applying = false }
                     } label: {
                         if applying {
-                            ProgressView().controlSize(.mini).padding(.horizontal, 6)
+                            ProgressView().controlSize(.mini).padding(.horizontal, 10).padding(.vertical, 6)
                         } else {
                             Label("Apply", systemImage: "doc.on.clipboard.fill")
-                                .font(.system(size: 11, weight: .semibold))
+                                .font(.system(size: 11.5, weight: .bold))
                         }
                     }
                     .buttonStyle(CRPrimaryButtonStyle(tint: CRTheme.brandElectric))
                     .disabled(applying)
                 } else if entry.applied_locally {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 10.5)).foregroundStyle(CRTheme.accentGreen)
+                    HStack(spacing: 5) {
+                        Image(systemName: "checkmark.seal.fill")
+                            .font(.system(size: 12)).foregroundStyle(CRTheme.accentGreen)
                         Text("Applied")
-                            .font(.system(size: 11, weight: .medium)).foregroundStyle(CRTheme.accentGreen)
+                            .font(.system(size: 11.5, weight: .bold)).foregroundStyle(CRTheme.accentGreen)
                     }
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(Capsule().fill(CRTheme.accentGreen.opacity(0.12)))
                 }
             }
         }
-        .padding(.horizontal, 13).padding(.vertical, 11)
-        .background(isHovered ? CRTheme.rowHover : .clear)
-        .contentShape(Rectangle())
+        .padding(.horizontal, 16).padding(.vertical, 16)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isHovered ? CRTheme.surfaceElevated : CRTheme.surfaceStrong.opacity(0.5))
+                .shadow(color: .black.opacity(isHovered ? 0.05 : 0), radius: 10, y: 4)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(isHovered ? CRTheme.stroke : CRTheme.strokeSoft, lineWidth: 0.5)
+                }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 4)
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onHover { isHovered = $0 }
         .animation(.crFast, value: isHovered)
         // ── Right-click context menu ──────────────────────────────────────────
         .contextMenu {
-            // Clipboard text entries: copy the preview or apply via engine for full content.
             if let preview = entry.text_preview, !preview.isEmpty {
                 Button {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(preview, forType: .string)
-                } label: {
-                    Label("Copy text", systemImage: "doc.on.clipboard")
-                }
+                } label: { Label("Copy text", systemImage: "doc.on.clipboard") }
 
                 if entry.isApplicable {
-                    Button {
-                        Task { await store.applyClipboard(entry: entry) }
-                    } label: {
-                        Label("Apply to clipboard", systemImage: "doc.on.clipboard.fill")
-                    }
+                    Button { Task { await store.applyClipboard(entry: entry) } }
+                    label: { Label("Apply to clipboard", systemImage: "doc.on.clipboard.fill") }
                 }
-
                 Divider()
             }
 
-            // File entries: reveal in Finder if we know a local path.
             if let dest = entry.dest_path, !dest.isEmpty {
-                Button {
-                    NSWorkspace.shared.selectFile(dest, inFileViewerRootedAtPath: "")
-                } label: {
-                    Label("Show in Finder", systemImage: "folder")
-                }
+                Button { NSWorkspace.shared.selectFile(dest, inFileViewerRootedAtPath: "") }
+                label: { Label("Show in Finder", systemImage: "folder") }
                 Divider()
             }
 
-            // Always: copy summary line.
             Button {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(entry.summary, forType: .string)
-            } label: {
-                Label("Copy summary", systemImage: "text.quote")
-            }
+            } label: { Label("Copy summary", systemImage: "text.quote") }
         }
     }
 
@@ -458,14 +486,16 @@ private extension IpcActivityEntry {
 struct FileTransferBanner: View {
     let transfer: FileTransferState
     @EnvironmentObject var store: ClipRelayStore
+    @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 11) {
+        HStack(spacing: 14) {
             ZStack {
-                Circle().fill(CRTheme.accentIndigo.opacity(0.10)).frame(width: 30, height: 30)
+                Circle().fill(CRTheme.accentIndigo.opacity(0.15)).frame(width: 36, height: 36)
                 Image(systemName: transferIcon)
-                    .font(.system(size: 13, weight: .semibold)).foregroundStyle(CRTheme.accentIndigo)
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(CRTheme.accentIndigo)
             }
+            .shadow(color: CRTheme.accentIndigo.opacity(0.3), radius: 8, x: 0, y: 2)
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
@@ -473,18 +503,18 @@ struct FileTransferBanner: View {
                         .font(.system(size: 13, weight: .semibold)).foregroundStyle(CRTheme.ink).lineLimit(1)
                     Spacer()
                     Text(transfer.formattedSize)
-                        .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(CRTheme.inkSoft)
+                        .font(.system(size: 11, design: .monospaced)).foregroundStyle(CRTheme.inkSoft)
                 }
 
                 if case .transferring = transfer.status {
-                    VStack(alignment: .leading, spacing: 3) {
+                    VStack(alignment: .leading, spacing: 4) {
                         CRProgressBar(value: Double(transfer.percent) / 100.0, tint: CRTheme.accentIndigo)
                         HStack {
                             Text("From \(transfer.fromDeviceName)")
                             Spacer()
                             Text("\(transfer.percent)%")
                         }
-                        .font(.system(size: 10.5)).foregroundStyle(CRTheme.inkSoft)
+                        .font(.system(size: 11)).foregroundStyle(CRTheme.inkSoft)
                     }
                 } else {
                     Text(statusText).font(.system(size: 11.5)).foregroundStyle(statusColor)
@@ -494,7 +524,19 @@ struct FileTransferBanner: View {
             // Action buttons
             actionGroup
         }
-        .padding(.horizontal, 13).padding(.vertical, 10)
+        .padding(.horizontal, 16).padding(.vertical, 14)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isHovered ? CRTheme.surfaceElevated : CRTheme.accentIndigo.opacity(0.04))
+                .shadow(color: .black.opacity(isHovered ? 0.05 : 0), radius: 10, y: 4)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(isHovered ? CRTheme.stroke : CRTheme.accentIndigo.opacity(0.15), lineWidth: 0.5)
+                }
+        }
+        .padding(.horizontal, 12).padding(.vertical, 8)
+        .onHover { isHovered = $0 }
+        .animation(.crFast, value: isHovered)
     }
 
     @ViewBuilder private var actionGroup: some View {

@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var quickAccessController:    NSWindowController?
     private var commandPaletteController: NSWindowController?
     private var toastWindowManager:       ClipRelayToastWindowManager?
+    private var callBannerManager:         CallBannerWindowManager?
     private var cancellables = Set<AnyCancellable>()
     private var daemonProcess: Process?
 
@@ -25,6 +26,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupWindows()
         bindStore()
         toastWindowManager = ClipRelayToastWindowManager(store: store)
+        callBannerManager = CallBannerWindowManager(store: store)
         registerHotKeys()
         registerSleepWakeObservers()
         registerStoreNotifications()
@@ -189,11 +191,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func statusBarImage() -> NSImage? {
-        guard let url   = Bundle.main.url(forResource: "StatusBarIcon", withExtension: "png"),
-              let image = NSImage(contentsOf: url) else { return nil }
-        image.size       = NSSize(width: 18, height: 18)
-        image.isTemplate = true
-        return image
+        if #available(macOS 11.0, *) {
+            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+            // Matches the Android app icon (two arrows inside a ring)
+            return NSImage(systemSymbolName: "arrow.triangle.2.circlepath.circle", accessibilityDescription: "ClipRelay")?.withSymbolConfiguration(config)
+        }
+        return nil
     }
 
     // MARK: - Windows

@@ -28,6 +28,17 @@ struct IpcStatusResponse: Codable {
     let pending_clipboard_count: Int?
     /// This device's public-key fingerprint (hex) for display in the Security pane.
     let local_fingerprint: String?
+    /// Active phone call state from a connected Android device (nil if no active call).
+    let active_call: IpcActiveCallState?
+}
+
+/// Active call state from the daemon's status response.
+struct IpcActiveCallState: Codable {
+    let device_id: String
+    let device_name: String
+    let state: String
+    let number: String
+    let contact_name: String
 }
 
 struct IpcResponse<T: Codable>: Codable {
@@ -61,6 +72,15 @@ final class ClipRelayIPCClient {
 
     func disconnectPeer(deviceId: String) async throws {
         _ = try await send(cmd: ["cmd": "disconnect_peer", "device_id": deviceId])
+    }
+
+    /// Send accept or decline call action to a ringing Android device.
+    func callAction(action: String, targetDevice: String) async throws {
+        _ = try await send(cmd: [
+            "cmd": "call_action",
+            "action": action,
+            "target_device": targetDevice
+        ])
     }
 
     func pauseSync(deviceId: String) async throws {

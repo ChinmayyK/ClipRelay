@@ -29,24 +29,29 @@ struct CommandPaletteView: View {
         let isSyncPaused = store.settings?.syncEnabled == false
         return [
             PaletteGroup(title: "Navigate", commands: [
-                cmd(id: "nav.timeline", icon: "clock.arrow.circlepath",
-                    label: "Timeline", hint: "View recent clipboard activity",
+                cmd(id: "nav.timeline", icon: "house",
+                    label: "Dashboard", hint: "View the dashboard",
                     tint: CRTheme.brandElectric, shortcut: "⌘1")
-                { store.selectedSection = .timeline },
+                { store.selectedSection = .dashboard },
+
+                cmd(id: "nav.history", icon: "doc.text",
+                    label: "Clipboard History", hint: "View recent clipboard activity",
+                    tint: CRTheme.accentGreen, shortcut: "⌘2")
+                { store.selectedSection = .history },
 
                 cmd(id: "nav.devices", icon: "desktopcomputer",
                     label: "Devices", hint: "Manage connected peers",
-                    tint: CRTheme.accentGreen, shortcut: "⌘2")
+                    tint: CRTheme.accentOrange, shortcut: "⌘3")
                 { store.selectedSection = .devices },
 
-                cmd(id: "nav.trust", icon: "checkmark.shield",
-                    label: "Trust", hint: "Review device trust requests",
-                    tint: CRTheme.accentOrange, shortcut: "⌘3")
-                { store.selectedSection = .trust },
+                cmd(id: "nav.workflows", icon: "square.grid.2x2",
+                    label: "Workflows", hint: "Review automation workflows",
+                    tint: CRTheme.accentPurple, shortcut: "⌘4")
+                { store.selectedSection = .workflows },
 
                 cmd(id: "nav.settings", icon: "slider.horizontal.3",
                     label: "Settings", hint: "Tune sync and network options",
-                    tint: CRTheme.accentPurple, shortcut: "⌘4")
+                    tint: CRTheme.sidebarInkSubtle, shortcut: "⌘,")
                 { store.selectedSection = .settings },
             ]),
 
@@ -195,11 +200,16 @@ struct CommandPaletteView: View {
 
     private func navigate(_ delta: Int) {
         let count = flat.count; guard count > 0 else { return }
-        selectedIndex = min(count - 1, max(0, selectedIndex + delta))
+        let next = min(count - 1, max(0, selectedIndex + delta))
+        if next != selectedIndex {
+            selectedIndex = next
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+        }
     }
 
     private func runSelected() {
         guard selectedIndex < flat.count else { return }
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
         let chosen = flat[selectedIndex]
         recentIDs = ([chosen.id] + recentIDs).prefix(5).map { $0 }
         chosen.action()

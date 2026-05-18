@@ -64,6 +64,8 @@ object ClipRelayJni {
     const val CR_EVENT_FILE_TRANSFER_COMPLETE  = 14
     const val CR_EVENT_FILE_TRANSFER_FAILED    = 15
     const val CR_EVENT_ACTIVITY_UPDATED        = 16
+    const val CR_EVENT_CALL_STATE_CHANGED       = 17
+    const val CR_EVENT_CALL_ACTION              = 18
 
     // ── Core engine ───────────────────────────────────────────────────────────
     @JvmStatic external fun start(deviceName: String?, port: Int, dataDir: String?, fileSaveDir: String?): Long
@@ -148,6 +150,20 @@ object ClipRelayJni {
         syncImages: Boolean,
         syncFiles: Boolean,
     ): Int
+
+    // ── Call continuity ───────────────────────────────────────────────────────
+    /** Push phone call state (ringing/offhook/idle) to all connected peers. */
+    @JvmStatic external fun pushCallState(
+        handle: Long, state: String, number: String, contactName: String
+    ): Int
+    /** Get the call state string from a CR_EVENT_CALL_STATE_CHANGED event. */
+    @JvmStatic external fun eventCallState(event: Long): String?
+    /** Get the phone number from a CR_EVENT_CALL_STATE_CHANGED event. */
+    @JvmStatic external fun eventCallNumber(event: Long): String?
+    /** Get the contact name from a CR_EVENT_CALL_STATE_CHANGED event. */
+    @JvmStatic external fun eventCallContactName(event: Long): String?
+    /** Get the action string ("accept"/"decline") from a CR_EVENT_CALL_ACTION event. */
+    @JvmStatic external fun eventCallAction(event: Long): String?
 }
 
 // ── Activity feed model ───────────────────────────────────────────────────────
@@ -500,6 +516,7 @@ class ClipRelayService : Service() {
                 myDeviceUuidPrefix = myDeviceId?.take(8)
                 startNsdDiscovery()   // advertise + browse so the Mac can find us
                 registerNetworkCallback() // restart NSD on WiFi changes
+                startCallStateMonitor()   // call continuity: relay phone state to peers
                 persistStatus()
             }
 
@@ -546,6 +563,7 @@ class ClipRelayService : Service() {
 
     override fun onDestroy() {
         stopNsdDiscovery()
+        stopCallStateMonitor()
         unregisterNetworkCallback()
         cancelNsdRetry()
         releaseMulticastLock()
@@ -898,6 +916,19 @@ class ClipRelayService : Service() {
                     kind = ActivityKind.WARNING, preview = msg.take(80)))
                 if (isCriticalFailure(msg)) showFailureNotification(msg)
                 updateForegroundNotification()
+            }
+
+            // ── Call continuity ───────────────────────────────────────────────
+            ClipRelayJni.CR_EVENT_CALL_STATE_CHANGED -> {
+                // On Android we originated this event — nothing to do.
+                // Other peers (macOS) will show the incoming call banner.
+                Log.d(TAG, "CallStateChanged echoed (no-op on originating device)")
+            }
+
+            ClipRelayJni.CR_EVENT_CALL_ACTION -> {
+                val action = ClipRelayJni.eventCallAction(ev) ?: return
+                Log.i(TAG, "Remote call action received: $action")
+                handleRemoteCallAction(action)
             }
         }
     }
@@ -1507,6 +1538,107 @@ class ClipRelayService : Service() {
             index++
         }
         return candidate
+    }
+
+    // ── Call continuity ──────────────────────────────────────────────────────
+    //
+    // Monitors phone call state via PhoneStateListener (or TelephonyCallback on
+    // API 31+) and pushes ringing/offhook/idle events to all connected peers.
+    // Remote call actions (accept/decline) from peers are executed via TelecomManager.
+
+    @Suppress("DEPRECATION")
+    private val callStateListener = object : android.telephony.PhoneStateListener() {
+        override fun onCallStateChanged(state: Int, incomingNumber: String?) {
+            val stateStr = when (state) {
+                android.telephony.TelephonyManager.CALL_STATE_RINGING -> "ringing"
+                android.telephony.TelephonyManager.CALL_STATE_OFFHOOK -> "offhook"
+                android.telephony.TelephonyManager.CALL_STATE_IDLE    -> "idle"
+                else -> return
+            }
+            val number = incomingNumber.orEmpty()
+            val contact = resolveContactName(number)
+            Log.i(TAG, "Call state: $stateStr number=$number contact=$contact")
+            val h = engineHandle
+            if (h != 0L) {
+                ClipRelayJni.pushCallState(h, stateStr, number, contact)
+            }
+        }
+    }
+
+    private fun startCallStateMonitor() {
+        if (!hasCallPermissions()) {
+            Log.i(TAG, "Call continuity: missing READ_PHONE_STATE permission, skipping")
+            return
+        }
+        runCatching {
+            @Suppress("DEPRECATION")
+            val tm = getSystemService(TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+            tm.listen(callStateListener, android.telephony.PhoneStateListener.LISTEN_CALL_STATE)
+            Log.i(TAG, "Call state monitor started")
+        }.onFailure { Log.w(TAG, "Failed to start call state monitor", it) }
+    }
+
+    private fun stopCallStateMonitor() {
+        runCatching {
+            @Suppress("DEPRECATION")
+            val tm = getSystemService(TELEPHONY_SERVICE) as android.telephony.TelephonyManager
+            tm.listen(callStateListener, android.telephony.PhoneStateListener.LISTEN_NONE)
+        }
+    }
+
+    private fun hasCallPermissions(): Boolean =
+        checkSelfPermission(android.Manifest.permission.READ_PHONE_STATE) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+
+    private fun resolveContactName(number: String): String {
+        if (number.isBlank()) return ""
+        if (checkSelfPermission(android.Manifest.permission.READ_CONTACTS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED) return ""
+        return runCatching {
+            val uri = android.net.Uri.withAppendedPath(
+                android.provider.ContactsContract.PhoneLookup.CONTENT_FILTER_URI,
+                android.net.Uri.encode(number)
+            )
+            contentResolver.query(
+                uri,
+                arrayOf(android.provider.ContactsContract.PhoneLookup.DISPLAY_NAME),
+                null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) ?: "" else ""
+            } ?: ""
+        }.getOrDefault("")
+    }
+
+    @Suppress("DEPRECATION")
+    private fun handleRemoteCallAction(action: String) {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val tm = getSystemService(TELECOM_SERVICE) as? android.telecom.TelecomManager ?: return
+            when (action) {
+                "accept" -> {
+                    if (checkSelfPermission(android.Manifest.permission.ANSWER_PHONE_CALLS) ==
+                        android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        runCatching { tm.acceptRingingCall() }
+                            .onSuccess { Log.i(TAG, "Remote accept: call accepted") }
+                            .onFailure { Log.w(TAG, "Remote accept failed", it) }
+                    } else {
+                        Log.w(TAG, "Remote accept: ANSWER_PHONE_CALLS permission not granted")
+                    }
+                }
+                "decline" -> {
+                    if (checkSelfPermission(android.Manifest.permission.ANSWER_PHONE_CALLS) ==
+                        android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        runCatching { tm.endCall() }
+                            .onSuccess { Log.i(TAG, "Remote decline: call ended") }
+                            .onFailure { Log.w(TAG, "Remote decline failed", it) }
+                    } else {
+                        Log.w(TAG, "Remote decline: ANSWER_PHONE_CALLS permission not granted")
+                    }
+                }
+                else -> Log.w(TAG, "Unknown remote call action: $action")
+            }
+        } else {
+            Log.w(TAG, "Remote call actions require API 26+")
+        }
     }
 
     // ── NSD (Network Service Discovery) ────────────────────────────────────────────────

@@ -59,96 +59,141 @@ private struct Sidebar: View {
 
     var body: some View {
         ZStack {
-            CRSidebarMaterial().ignoresSafeArea()
-            CRTheme.sidebarOverlay.ignoresSafeArea()
-
-            // Subtle top shimmer (adaptive: just-visible in light, barely-there in dark)
-            VStack {
-                LinearGradient(
-                    colors: [CRTheme.sidebarInk.opacity(0.018), .clear],
-                    startPoint: .top, endPoint: .bottom)
-                    .frame(height: 80)
-                Spacer()
-            }
+            CRHUDMaterial().ignoresSafeArea()
 
             VStack(alignment: .leading, spacing: 0) {
-                SidebarHeader(store: store)
-                CRDividerDark().padding(.horizontal, 16).padding(.vertical, 12)
-
-                Text("NAVIGATION")
-                    .font(.system(size: 9.5, weight: .bold)).tracking(1.2)
-                    .foregroundStyle(CRTheme.sidebarInkSubtle)
-                    .padding(.horizontal, 18).padding(.bottom, 4)
-
-                VStack(spacing: 1) {
-                    SidebarNavButton(icon: "clock.arrow.circlepath", label: "Timeline",
-                                     badge: 0, shortcut: "⌘1",
-                                     isSelected: store.selectedSection == .timeline,
-                                     action: { store.selectedSection = .timeline })
-                    SidebarNavButton(icon: "desktopcomputer", label: "Devices",
-                                     badge: store.devices.count, shortcut: "⌘2",
-                                     isSelected: store.selectedSection == .devices,
-                                     action: { store.selectedSection = .devices })
-                    SidebarNavButton(icon: "checkmark.shield", label: "Trust",
-                                     badge: untrustedCount, shortcut: "⌘3",
-                                     isSelected: store.selectedSection == .trust,
-                                     action: { store.selectedSection = .trust })
-                    SidebarNavButton(icon: "slider.horizontal.3", label: "Settings",
-                                     badge: 0, shortcut: "⌘4",
-                                     isSelected: store.selectedSection == .settings,
-                                     action: { store.selectedSection = .settings })
+                // Profile Area
+                HStack(spacing: 16) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.primary.opacity(0.08))
+                            .frame(width: 44, height: 44)
+                        Image(systemName: "person.fill")
+                            .font(.system(size: 18))
+                            .foregroundStyle(Color.secondary)
+                    }
+                    Text(NSUserName())
+                        .font(.system(size: 18, weight: .bold))
                 }
-                .padding(.horizontal, 8)
+                .padding(.horizontal, 24)
+                .padding(.top, 36)
+                .padding(.bottom, 28)
+
+                ScrollView {
+                    VStack(spacing: 8) {
+                        // Devices Group
+                        VStack(spacing: 4) {
+                            HStack {
+                                Label("Devices", systemImage: "macbook.and.iphone")
+                                    .font(.system(size: 14, weight: .bold))
+                                Spacer()
+                            }
+                            .padding(.horizontal, 24)
+                            .padding(.vertical, 12)
+                            .foregroundStyle(CRTheme.inkSubtle)
+
+                            // Active Device List
+                            ForEach(store.connectedDevices) { device in
+                                VStack(spacing: 4) {
+                                    HStack(spacing: 12) {
+                                        Circle().fill(CRTheme.accentGreen).frame(width: 8, height: 8)
+                                            .shadow(color: CRTheme.accentGreen.opacity(0.4), radius: 4)
+                                        Text(device.name)
+                                            .font(.system(size: 14, weight: .bold))
+                                        Spacer()
+                                        Image(systemName: "chevron.down")
+                                            .font(.system(size: 12, weight: .bold))
+                                            .foregroundStyle(Color.secondary.opacity(0.6))
+                                    }
+                                    .padding(.horizontal, 24)
+                                    .padding(.vertical, 14)
+                                    .background {
+                                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                            .fill(CRTheme.surfaceElevated.opacity(0.3))
+                                    }
+                                    .padding(.horizontal, 12)
+
+                                    // Sub-items
+                                    VStack(spacing: 4) {
+                                        SidebarSubItem(icon: "folder.fill", label: "Files")
+                                        SidebarSubItem(icon: "macwindow", label: "Screencast")
+                                        SidebarSubItem(icon: "doc.on.clipboard.fill", label: "History", isSelected: store.selectedSection == .history) {
+                                            store.selectedSection = .history
+                                        }
+                                    }
+                                    .padding(.leading, 28)
+                                    .padding(.trailing, 12)
+                                    .padding(.top, 4)
+                                }
+                            }
+                        }
+                        
+                        Spacer().frame(height: 24)
+
+                        SidebarNavButton(icon: "macwindow.on.rectangle", label: "Remote control",
+                                         badge: 0, shortcut: "",
+                                         isSelected: false,
+                                         action: { })
+                            .padding(.horizontal, 12)
+                    }
+                }
 
                 Spacer()
-                SidebarFooter(store: store)
+                
+                // Bottom Toolbar
+                HStack(spacing: 20) {
+                    Button(action: {}) {
+                        Image(systemName: "sidebar.left")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    
+                    Button(action: { store.selectedSection = .settings }) {
+                        Image(systemName: "gearshape.fill")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(store.selectedSection == .settings ? CRTheme.brandElectric : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+                .padding(.horizontal, 28)
+                .padding(.bottom, 28)
             }
-        }
-        // Keyboard shortcuts ⌘1-4
-        .background {
-            Group {
-                Button("") { store.selectedSection = .timeline }.keyboardShortcut("1", modifiers: .command)
-                Button("") { store.selectedSection = .devices  }.keyboardShortcut("2", modifiers: .command)
-                Button("") { store.selectedSection = .trust    }.keyboardShortcut("3", modifiers: .command)
-                Button("") { store.selectedSection = .settings }.keyboardShortcut("4", modifiers: .command)
-            }
-            .frame(width: 0, height: 0).opacity(0)
         }
     }
 }
 
-// MARK: - Sidebar Header
-
-private struct SidebarHeader: View {
-    @ObservedObject var store: ClipRelayStore
+private struct SidebarSubItem: View {
+    let icon: String
+    let label: String
+    var isSelected: Bool = false
+    var action: (() -> Void)? = nil
+    @State private var isHovered = false
+    
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                CRAppIconMark(size: 34)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("ClipRelay")
-                        .font(.system(size: 14.5, weight: .bold, design: .rounded))
-                        .foregroundStyle(CRTheme.sidebarInk)
-                    HStack(spacing: 4) {
-                        StatusDot(isOnline: store.isRunning, size: 5.5)
-                        Text(store.isRunning ? "Active" : "Offline")
-                            .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(CRTheme.sidebarInkSoft)
-                    }
-                }
+        Button(action: { action?() }) {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 20)
+                Text(label)
+                    .font(.system(size: 14, weight: .semibold))
                 Spacer()
             }
-            if !store.connectionBanner.isEmpty {
-                HStack(spacing: 5) {
-                    Image(systemName: "wifi").font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(CRTheme.sidebarInkSubtle)
-                    Text(store.connectionBanner).font(.system(size: 11))
-                        .foregroundStyle(CRTheme.sidebarInkSoft)
-                        .lineLimit(1).truncationMode(.tail)
-                }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+            .foregroundStyle(isSelected ? CRTheme.brandElectric : (isHovered ? CRTheme.ink : CRTheme.inkSubtle))
+            .background {
+                Capsule()
+                    .fill(isSelected ? CRTheme.brandElectric.opacity(0.12) : (isHovered ? Color.primary.opacity(0.04) : Color.clear))
             }
+            .contentShape(Capsule())
         }
-        .padding(.horizontal, 16).padding(.top, 20).padding(.bottom, 4)
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.crFast, value: isHovered)
+        .animation(.crFast, value: isSelected)
     }
 }
 
@@ -201,9 +246,10 @@ private struct DetailContent: View {
             // Content — keyed so SwiftUI rebuilds on section change (enables transition)
             Group {
                 switch store.selectedSection {
-                case .timeline: TimelineSectionView(store: store, density: density)
+                case .dashboard: UnifiedDashboardView(store: store, density: density)
+                case .history:   TimelineSectionView(store: store, density: density)
                 case .devices:  DevicesSectionView(store: store, rename: beginRename)
-                case .trust:    TrustSectionView(store: store, rename: beginRename)
+                case .workflows: TrustSectionView(store: store, rename: beginRename)
                 case .settings: PreferencesView(store: store)
                 }
             }
@@ -220,7 +266,7 @@ private struct DetailContent: View {
 
     @ViewBuilder private var toolbarActions: some View {
         switch store.selectedSection {
-        case .timeline:
+        case .dashboard, .history:
             // Density toggle
             HStack(spacing: 4) {
                 Button {
@@ -249,7 +295,7 @@ private struct DetailContent: View {
             }
             .buttonStyle(CRSecondaryButtonStyle())
 
-        case .trust:
+        case .workflows:
             if store.devices.filter({ $0.trustState == .untrusted }).count > 1 {
                 Button("Reject All") { store.rejectAll() }
                     .buttonStyle(CRDestructiveButtonStyle())
@@ -398,12 +444,12 @@ private struct CompanionDeviceCard: View {
         .frame(width: 312, alignment: .leading)
         .background {
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color.white.opacity(0.72))
+                .fill(CRTheme.cardGradient)
                 .overlay {
                     RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .strokeBorder(CRTheme.stroke.opacity(0.36), lineWidth: 0.5)
+                        .strokeBorder(CRTheme.brandElectric.opacity(0.50), lineWidth: 1.0)
                 }
-                .shadow(color: .black.opacity(0.06), radius: 18, x: 0, y: 8)
+                .modifier(GlowModifier(color: CRTheme.brandElectric, radius: 18))
         }
         .onAppear {
             withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true)) {
@@ -477,6 +523,7 @@ private struct ContinuityStagingDrawer: View {
 
                 HStack(spacing: 8) {
                     Button(isLikelyOTP(leadEntry.text_preview) ? "Copy code" : "Copy") {
+                        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
                         Task { await store.applyClipboard(entry: leadEntry) }
                     }
                     .buttonStyle(CRPrimaryButtonStyle(tint: CRTheme.brandElectric))
@@ -830,7 +877,10 @@ struct TimelineCard: View {
                 if isHovered {
                     HStack(spacing: 6) {
                         if item.fullText != nil {
-                            Button("Copy") { store.copyTimelineItem(item) }
+                            Button("Copy") {
+                                NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+                                store.copyTimelineItem(item)
+                            }
                                 .buttonStyle(CRPrimaryButtonStyle())
                         }
                         Menu {
@@ -873,6 +923,7 @@ struct TimelineCard: View {
                         radius: isHovered ? 12 : 4, x: 0, y: isHovered ? 3 : 1)
         }
         .onHover { isHovered = $0 }
+        .scaleEffect(isHovered ? 1.015 : 1.0)
         .animation(.crSpring, value: isHovered)
     }
 }
@@ -979,6 +1030,7 @@ private struct DeviceCard: View {
                         radius: isHovered ? 12 : 4, x: 0, y: isHovered ? 3 : 1)
         }
         .onHover { isHovered = $0 }
+        .scaleEffect(isHovered ? 1.015 : 1.0)
         .animation(.crSpring, value: isHovered)
     }
 }
@@ -1064,5 +1116,311 @@ private struct RenameDeviceSheet: View {
         .padding(24).frame(width: 330)
         .background(CRTheme.surfaceStrong.ignoresSafeArea())
         .onAppear { fieldFocused = true }
+    }
+}
+
+// MARK: - Unified Dashboard (Mockup Style)
+
+struct UnifiedDashboardView: View {
+    @ObservedObject var store: ClipRelayStore
+    let density: CRDensityMode
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header bar
+            HStack {
+                Text("Welcome back, \(NSUserName())!")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(Color.primary)
+                Spacer()
+                Button(action: { store.scanForDevices() }) {
+                    Label("Add device", systemImage: "plus")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .buttonStyle(CRSecondaryButtonStyle())
+            }
+            .padding(.horizontal, 40)
+            .padding(.top, 32)
+            .padding(.bottom, 8)
+
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text("Connect device")
+                            .font(.system(size: 14, weight: .semibold))
+                        Image(systemName: "arrow.triangle.2.circlepath")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(Color.secondary)
+                    }
+                    Text("Connect your phone or tablet to use file management, screencasting and more features.")
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.secondary)
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 40)
+            .padding(.bottom, 24)
+
+            // Main Hero Area
+            if let activeDevice = store.connectedDevices.first {
+                HeroDeviceCard(device: activeDevice, store: store)
+                    .padding(.horizontal, 40)
+                    .padding(.bottom, 40)
+            } else {
+                EmptyHeroCard(store: store)
+                    .padding(.horizontal, 40)
+                    .padding(.bottom, 40)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+// MARK: - Hero Device Layouts
+
+private struct EmptyHeroCard: View {
+    @ObservedObject var store: ClipRelayStore
+    @Environment(\.colorScheme) var colorScheme
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "antenna.radiowaves.left.and.right")
+                .font(.system(size: 48))
+                .foregroundStyle(CRTheme.brandElectric)
+            Text("No Devices Connected")
+                .font(.system(size: 20, weight: .bold))
+            Text("Open the app on your phone or tablet to start syncing.")
+                .font(.system(size: 14))
+                .foregroundStyle(Color.secondary)
+            Button("Scan for devices") { store.scanForDevices() }
+                .buttonStyle(CRPrimaryButtonStyle(tint: CRTheme.brandElectric))
+                .padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(colorScheme == .dark ? Color(white: 0.1) : .white)
+                .shadow(color: .black.opacity(0.04), radius: 10, y: 4)
+        }
+    }
+}
+
+private struct HeroDeviceCard: View {
+    let device: ManagedDevice
+    @ObservedObject var store: ClipRelayStore
+    @Environment(\.colorScheme) var colorScheme
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // Left Half: Massive Visual Mockup
+            ZStack {
+                Rectangle()
+                    .fill(Color.primary.opacity(0.03))
+                
+                // Device Mockup
+                ZStack {
+                    RoundedRectangle(cornerRadius: 32, style: .continuous)
+                        .fill(Color.black.opacity(0.85))
+                        .frame(width: 160, height: 320)
+                        .shadow(color: .black.opacity(0.25), radius: 30, x: 0, y: 15)
+                    
+                    // Screen area
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(
+                            LinearGradient(colors: [CRTheme.brandElectric, CRTheme.brandViolet], startPoint: .topLeading, endPoint: .bottomTrailing)
+                        )
+                        .frame(width: 146, height: 306)
+                        .overlay {
+                            VStack {
+                                Spacer()
+                                Image(systemName: "applelogo")
+                                    .font(.system(size: 48))
+                                    .foregroundStyle(.white.opacity(0.9))
+                                Spacer()
+                            }
+                        }
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            
+            // Right Half: Details and Actions
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Spacer()
+                    Button(action: { store.disconnect(device) }) {
+                        Label("Disconnect", systemImage: "link.badge.minus")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.secondary)
+                    
+                    Button(action: {}) {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 13, weight: .bold))
+                            .rotationEffect(.degrees(90))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.secondary)
+                    .padding(.leading, 12)
+                }
+                .padding(.bottom, 40)
+                
+                Text(device.name)
+                    .font(.system(size: 32, weight: .bold))
+                    .foregroundStyle(Color.primary)
+                    .padding(.bottom, 12)
+                
+                HStack(spacing: 12) {
+                    HStack(spacing: 4) {
+                        Circle().fill(CRTheme.accentGreen).frame(width: 6, height: 6)
+                        Text("Connected")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(CRTheme.accentGreen)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background(Capsule().fill(CRTheme.accentGreen.opacity(0.1)))
+                    
+                    HStack(spacing: 4) {
+                        Image(systemName: "battery.100").foregroundStyle(Color.primary)
+                        Text("100%")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                }
+                .padding(.bottom, 60)
+                
+                // Action Grid
+                HStack(spacing: 0) {
+                    HeroActionButton(icon: "folder", label: "Files") {
+                        // Trigger file dialog
+                    }
+                    Spacer()
+                    HeroActionButton(icon: "macwindow", label: "Screencast") {
+                        // Placeholder
+                    }
+                    Spacer()
+                    HeroActionButton(icon: "arrow.triangle.2.circlepath", label: "Content sync") {
+                        store.selectedSection = .history
+                    }
+                }
+                .padding(.trailing, 20)
+                
+                Spacer()
+            }
+            .padding(40)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(colorScheme == .dark ? Color(white: 0.12) : .white)
+        }
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(colorScheme == .dark ? Color(white: 0.12) : .white)
+                .shadow(color: .black.opacity(0.06), radius: 15, y: 5)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+private struct HeroActionButton: View {
+    let icon: String
+    let label: String
+    let action: () -> Void
+    @State private var isHovered = false
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(isHovered ? CRTheme.brandElectric.opacity(0.1) : Color.primary.opacity(0.03))
+                        .frame(width: 48, height: 48)
+                    Image(systemName: icon)
+                        .font(.system(size: 18))
+                        .foregroundStyle(isHovered ? CRTheme.brandElectric : Color.primary)
+                }
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.secondary)
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+    }
+}
+
+private struct UnifiedDeviceCard: View {
+    let device: ManagedDevice
+    @Environment(\.colorScheme) var colorScheme
+    @State private var isHovered = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .top) {
+                Image(systemName: "iphone") // or dynamic based on device type
+                    .font(.system(size: 24))
+                    .foregroundStyle(CRTheme.brandElectric)
+                
+                Spacer()
+                
+                Text(device.connectionState == .connected ? "Active" : "Linked")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(CRTheme.brandElectric)
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(device.name)
+                    .font(.system(size: 18, weight: .bold))
+                Text(device.connectionState == .connected ? "Continuity Active" : "Proximity Syncing...")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(Color.secondary)
+            }
+
+            CRDividerDark()
+
+            VStack(spacing: 6) {
+                HStack {
+                    Label("Battery", systemImage: "battery.100")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.secondary)
+                    Spacer()
+                    Text("100%")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                HStack {
+                    Label("Last Sync", systemImage: "clock")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color.secondary)
+                    Spacer()
+                    Text(device.lastSync?.relativeTimeString() ?? "Just now")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+            }
+
+            HStack(spacing: 8) {
+                Button("Copy Last") {}
+                    .buttonStyle(CRSecondaryButtonStyle())
+                Button("Manage") {}
+                    .buttonStyle(CRSecondaryButtonStyle())
+            }
+        }
+        .padding(20)
+        .frame(width: 240)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(colorScheme == .dark ? Color(white: 0.1) : .white)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.05), lineWidth: 1)
+        }
+        // Gradient Glow
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(LinearGradient(colors: [CRTheme.brandElectric.opacity(0.3), CRTheme.brandPink.opacity(0.3)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                .blur(radius: 20)
+                .opacity(isHovered ? 1.0 : 0.4)
+                .offset(y: 8)
+        }
+        .scaleEffect(isHovered ? 1.02 : 1.0)
+        .animation(.crSpring, value: isHovered)
+        .onHover { isHovered = $0 }
     }
 }

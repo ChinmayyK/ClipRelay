@@ -246,6 +246,8 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_eventType(
         FileTransferComplete { .. } => 14,
         FileTransferFailed { .. } => 15,
         ActivityFeedUpdated { .. } => 16,
+        CallStateChanged { .. } => 17,
+        CallActionRequest { .. } => 18,
         Warning(_) => 7,
     }
 }
@@ -996,4 +998,110 @@ pub extern "system" fn Java_com_cliprelay_ClipRelayJni_peersJson(
         Ok(s) => s.into_raw(),
         Err(_) => std::ptr::null_mut(),
     }
+}
+
+// ── Call continuity JNI exports ───────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "system" fn Java_com_cliprelay_ClipRelayJni_pushCallState(
+    mut env: JNIEnv,
+    _class: JClass,
+    handle: jlong,
+    state: JString,
+    number: JString,
+    contact_name: JString,
+) -> jint {
+    if handle == 0 {
+        return -1;
+    }
+    let state: String = match env.get_string(&state) {
+        Ok(s) => s.into(),
+        Err(_) => return -1,
+    };
+    let number: String = env.get_string(&number).map(|s| s.into()).unwrap_or_default();
+    let contact_name: String = env
+        .get_string(&contact_name)
+        .map(|s| s.into())
+        .unwrap_or_default();
+    let h = unsafe { &*(handle as *const AndroidHandle) };
+    rt().block_on(h.engine.push_call_state(state, number, contact_name));
+    0
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_cliprelay_ClipRelayJni_eventCallState(
+    mut env: JNIEnv,
+    _class: JClass,
+    event: jlong,
+) -> jstring {
+    if event == 0 {
+        return std::ptr::null_mut();
+    }
+    let ev = unsafe { &*(event as *const crate::engine::EngineEvent) };
+    let val = match ev {
+        crate::engine::EngineEvent::CallStateChanged { state, .. } => Some(state.as_str()),
+        _ => None,
+    };
+    val.and_then(|s| env.new_string(s).ok())
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_cliprelay_ClipRelayJni_eventCallNumber(
+    mut env: JNIEnv,
+    _class: JClass,
+    event: jlong,
+) -> jstring {
+    if event == 0 {
+        return std::ptr::null_mut();
+    }
+    let ev = unsafe { &*(event as *const crate::engine::EngineEvent) };
+    let val = match ev {
+        crate::engine::EngineEvent::CallStateChanged { number, .. } => Some(number.as_str()),
+        _ => None,
+    };
+    val.and_then(|s| env.new_string(s).ok())
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_cliprelay_ClipRelayJni_eventCallContactName(
+    mut env: JNIEnv,
+    _class: JClass,
+    event: jlong,
+) -> jstring {
+    if event == 0 {
+        return std::ptr::null_mut();
+    }
+    let ev = unsafe { &*(event as *const crate::engine::EngineEvent) };
+    let val = match ev {
+        crate::engine::EngineEvent::CallStateChanged {
+            contact_name, ..
+        } => Some(contact_name.as_str()),
+        _ => None,
+    };
+    val.and_then(|s| env.new_string(s).ok())
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
+}
+
+#[no_mangle]
+pub extern "system" fn Java_com_cliprelay_ClipRelayJni_eventCallAction(
+    mut env: JNIEnv,
+    _class: JClass,
+    event: jlong,
+) -> jstring {
+    if event == 0 {
+        return std::ptr::null_mut();
+    }
+    let ev = unsafe { &*(event as *const crate::engine::EngineEvent) };
+    let val = match ev {
+        crate::engine::EngineEvent::CallActionRequest { action, .. } => Some(action.as_str()),
+        _ => None,
+    };
+    val.and_then(|s| env.new_string(s).ok())
+        .map(|s| s.into_raw())
+        .unwrap_or(std::ptr::null_mut())
 }

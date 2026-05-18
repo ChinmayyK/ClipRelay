@@ -16,56 +16,77 @@ struct PreferencesView: View {
     @State private var portIsInvalid    = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            PrefsToolbar(tab: $tab)
-            CRDivider()
-
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 0) {
-                    pane
-                        .padding(.horizontal, 24)
-                        .padding(.top, 20)
-                        .padding(.bottom, 28)
+        HStack(spacing: 0) {
+            // Sidebar
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Settings").font(.system(size: 24, weight: .bold)).foregroundStyle(CRTheme.ink)
                 }
+                .padding(.horizontal, 20)
+                .padding(.top, 30)
+
+                VStack(spacing: 4) {
+                    ForEach(SettingsTab.allCases) { t in 
+                        PrefsTabChip(tab: t, isSelected: tab == t) { tab = t } 
+                    }
+                }
+                .padding(.horizontal, 12)
+                Spacer()
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // Mark dirty on any meaningful change
-            .onChange(of: copy.deviceName)                  { _ in isDirty = true }
-            .onChange(of: copy.syncEnabled)                 { _ in isDirty = true }
-            .onChange(of: copy.syncText)                    { _ in isDirty = true }
-            .onChange(of: copy.syncImages)                  { _ in isDirty = true }
-            .onChange(of: copy.syncFiles)                   { _ in isDirty = true }
-            .onChange(of: copy.syncMode)                    { _ in isDirty = true }
-            .onChange(of: copy.maxPayloadBytes)             { _ in isDirty = true }
-            .onChange(of: copy.clipboardPollMs)             { _ in isDirty = true }
-            .onChange(of: copy.maxPushesPerSec)             { _ in isDirty = true }
-            .onChange(of: copy.rateLimitBurst)              { _ in isDirty = true }
-            .onChange(of: copy.smartSyncDuplicateWindowMs)  { _ in isDirty = true }
-            .onChange(of: copy.smartSyncDebounceMs)         { _ in isDirty = true }
-            .onChange(of: copy.startOnLogin)                { _ in isDirty = true }
-            .onChange(of: copy.blockSensitiveText)          { _ in isDirty = true }
-            .onChange(of: copy.requireTofuConfirmation)     { _ in isDirty = true }
-            .onChange(of: copy.showReceiveNotification)     { _ in isDirty = true }
-            .onChange(of: copy.historyLimit)                { _ in isDirty = true }
-            .onChange(of: copy.maxHistoryTextBytes)         { _ in isDirty = true }
-            .onChange(of: copy.ignorePatterns)              { _ in isDirty = true }
+            .frame(width: 220)
+            .background(CRTheme.surfaceStrong)
 
-            PrefsFooter(
-                isDirty:      isDirty,
-                portIsInvalid: portIsInvalid,
-                onRevert: {
-                    if let s = store.settings { copy = s; portString = "\(s.port)" }
-                    portIsInvalid = false
-                    isDirty       = false
-                },
-                onSave: {
-                    guard !portIsInvalid else { return }
-                    store.saveSettings(copy)
-                    isDirty = false
+            Rectangle().fill(CRTheme.stroke).frame(width: 0.5)
+
+            // Content
+            VStack(spacing: 0) {
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        pane
+                            .padding(.horizontal, 32)
+                            .padding(.top, 32)
+                            .padding(.bottom, 28)
+                    }
                 }
-            )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Mark dirty on any meaningful change
+                .onChange(of: copy.deviceName)                  { _ in isDirty = true }
+                .onChange(of: copy.syncEnabled)                 { _ in isDirty = true }
+                .onChange(of: copy.syncText)                    { _ in isDirty = true }
+                .onChange(of: copy.syncImages)                  { _ in isDirty = true }
+                .onChange(of: copy.syncFiles)                   { _ in isDirty = true }
+                .onChange(of: copy.syncMode)                    { _ in isDirty = true }
+                .onChange(of: copy.maxPayloadBytes)             { _ in isDirty = true }
+                .onChange(of: copy.clipboardPollMs)             { _ in isDirty = true }
+                .onChange(of: copy.maxPushesPerSec)             { _ in isDirty = true }
+                .onChange(of: copy.rateLimitBurst)              { _ in isDirty = true }
+                .onChange(of: copy.smartSyncDuplicateWindowMs)  { _ in isDirty = true }
+                .onChange(of: copy.smartSyncDebounceMs)         { _ in isDirty = true }
+                .onChange(of: copy.startOnLogin)                { _ in isDirty = true }
+                .onChange(of: copy.blockSensitiveText)          { _ in isDirty = true }
+                .onChange(of: copy.requireTofuConfirmation)     { _ in isDirty = true }
+                .onChange(of: copy.showReceiveNotification)     { _ in isDirty = true }
+                .onChange(of: copy.historyLimit)                { _ in isDirty = true }
+                .onChange(of: copy.maxHistoryTextBytes)         { _ in isDirty = true }
+                .onChange(of: copy.ignorePatterns)              { _ in isDirty = true }
+
+                PrefsFooter(
+                    isDirty:      isDirty,
+                    portIsInvalid: portIsInvalid,
+                    onRevert: {
+                        if let s = store.settings { copy = s; portString = "\(s.port)" }
+                        portIsInvalid = false
+                        isDirty       = false
+                    },
+                    onSave: {
+                        guard !portIsInvalid else { return }
+                        store.saveSettings(copy)
+                        isDirty = false
+                    }
+                )
+            }
         }
-        .frame(minWidth: 560, minHeight: 580)
+        .frame(minWidth: 720, minHeight: 600)
         .background(CRTheme.surfaceElevated.ignoresSafeArea())
         .onAppear {
             if let s = store.settings { copy = s; portString = "\(s.port)" }
@@ -94,7 +115,7 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     var label: String { rawValue.capitalized }
     var icon:  String {
         switch self {
-        case .general:  return "person.crop.circle"
+        case .general:  return "switch.2"
         case .sync:     return "arrow.triangle.2.circlepath"
         case .network:  return "network"
         case .security: return "lock.shield"
@@ -110,50 +131,32 @@ private enum SettingsTab: String, CaseIterable, Identifiable {
     }
 }
 
-private struct PrefsToolbar: View {
-    @Binding var tab: SettingsTab
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Settings").font(.system(size: 19, weight: .bold)).foregroundStyle(CRTheme.ink)
-                    Text("Configure ClipRelay for your workflow")
-                        .font(.system(size: 12)).foregroundStyle(CRTheme.inkSoft)
-                }
-                Spacer()
-            }
-            .padding(.horizontal, 24).padding(.top, 20).padding(.bottom, 14)
-
-            HStack(spacing: 2) {
-                ForEach(SettingsTab.allCases) { t in PrefsTabChip(tab: t, isSelected: tab == t) { tab = t } }
-                Spacer()
-            }
-            .padding(.horizontal, 20).padding(.bottom, 12)
-        }
-    }
-}
-
 private struct PrefsTabChip: View {
     let tab: SettingsTab; let isSelected: Bool; let action: () -> Void
     @State private var hovered = false
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: isSelected ? tab.icon + ".fill" : tab.icon)
-                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? tab.tint : CRTheme.inkSoft).symbolRenderingMode(.hierarchical)
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(isSelected ? tab.tint : Color.clear)
+                        .frame(width: 24, height: 24)
+                    Image(systemName: isSelected ? tab.icon : tab.icon)
+                        .font(.system(size: 13, weight: isSelected ? .bold : .medium))
+                        .foregroundStyle(isSelected ? Color.white : CRTheme.inkSoft)
+                }
                 Text(tab.label)
-                    .font(.system(size: 13, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? tab.tint : CRTheme.inkSoft)
+                    .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
+                    .foregroundStyle(isSelected ? CRTheme.ink : CRTheme.inkSoft)
+                Spacer()
             }
-            .padding(.horizontal, 13).padding(.vertical, 6.5)
+            .padding(.horizontal, 10).padding(.vertical, 8)
             .background {
-                Capsule()
-                    .fill(isSelected ? tab.tint.opacity(0.09) : (hovered ? CRTheme.surface : .clear))
-                    .overlay {
-                        if isSelected { Capsule().strokeBorder(tab.tint.opacity(0.22), lineWidth: 0.5) }
-                    }
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(isSelected ? CRTheme.surface : (hovered ? CRTheme.surfaceElevated : .clear))
+                    .shadow(color: .black.opacity(isSelected ? 0.04 : 0), radius: 4, y: 2)
             }
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain).onHover { hovered = $0 }
         .animation(.crFast, value: isSelected).animation(.crFast, value: hovered)
@@ -442,32 +445,18 @@ private struct SecurityPane: View {
                 }
                 if let fp = store.localFingerprint, !fp.isEmpty {
                     PrefsDivider()
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "key.fill")
-                                .font(.system(size: 10.5)).foregroundStyle(CRTheme.accentBlue)
-                            Text("Fingerprint")
-                                .font(.system(size: 13, weight: .medium)).foregroundStyle(CRTheme.ink)
-                            Spacer()
-                            Button {
+                    PrefsRow(icon: "key.fill", label: "Fingerprint") {
+                        HStack(spacing: 8) {
+                            Text(String(fp.prefix(16)) + "...")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(CRTheme.inkSoft)
+                            Button("Copy") {
                                 NSPasteboard.general.clearContents()
                                 NSPasteboard.general.setString(fp, forType: .string)
-                            } label: {
-                                Label("Copy", systemImage: "doc.on.clipboard")
-                                    .font(.system(size: 11))
                             }
                             .buttonStyle(CRSecondaryButtonStyle())
                         }
-                        Text(formattedFingerprint(fp))
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(CRTheme.inkSoft)
-                            .lineSpacing(3)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("Compare with the Android app's fingerprint when pairing to verify identity.")
-                            .font(.system(size: 11)).foregroundStyle(CRTheme.inkSubtle)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
-                    .padding(.horizontal, 14).padding(.vertical, 12)
                 }
             }
         }
@@ -529,28 +518,29 @@ private struct PrefsSection<Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 5.5, style: .continuous)
-                        .fill(tint.opacity(0.10)).frame(width: 20, height: 20)
-                    Image(systemName: icon).font(.system(size: 9.5, weight: .semibold))
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(tint.opacity(0.12)).frame(width: 24, height: 24)
+                    Image(systemName: icon).font(.system(size: 11, weight: .bold))
                         .foregroundStyle(tint).symbolRenderingMode(.hierarchical)
                 }
                 Text(title.uppercased())
-                    .font(.system(size: 10, weight: .bold)).tracking(0.7).foregroundStyle(CRTheme.inkSubtle)
+                    .font(.system(size: 11, weight: .bold)).tracking(1.0).foregroundStyle(CRTheme.inkSubtle)
             }
-            .padding(.leading, 2)
+            .padding(.leading, 4)
 
             VStack(spacing: 0) { content() }
-                .background(CRTheme.surfaceStrong)
-                .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                .background(CRTheme.surfaceElevated)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: .black.opacity(0.04), radius: 10, y: 4)
                 .overlay {
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .strokeBorder(CRTheme.stroke.opacity(0.40), lineWidth: 0.5)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .strokeBorder(CRTheme.stroke, lineWidth: 0.5)
                 }
         }
-        .padding(.bottom, 22)
+        .padding(.bottom, 28)
     }
 }
 
@@ -561,30 +551,30 @@ private struct PrefsRow<Control: View>: View {
     @ViewBuilder var control: () -> Control
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
-            HStack(alignment: .center, spacing: 9) {
+        HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: 12) {
                 if let icon {
-                    Image(systemName: icon).font(.system(size: 12.5, weight: .medium))
-                        .foregroundStyle(CRTheme.inkSubtle).frame(width: 18)
+                    Image(systemName: icon).font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(CRTheme.inkSubtle).frame(width: 20)
                         .symbolRenderingMode(.hierarchical)
                 }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(label).font(.system(size: 13, weight: .medium)).foregroundStyle(CRTheme.ink)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(label).font(.system(size: 14, weight: .semibold)).foregroundStyle(CRTheme.ink)
                     if let d = description {
-                        Text(d).font(.system(size: 11.5)).foregroundStyle(CRTheme.inkSoft)
-                            .fixedSize(horizontal: false, vertical: true).lineSpacing(1)
+                        Text(d).font(.system(size: 12)).foregroundStyle(CRTheme.inkSoft)
+                            .fixedSize(horizontal: false, vertical: true).lineSpacing(1.5)
                     }
                 }
             }
-            Spacer()
+            Spacer(minLength: 16)
             control()
         }
-        .padding(.horizontal, 14).padding(.vertical, 11)
+        .padding(.horizontal, 18).padding(.vertical, 14)
     }
 }
 
 private struct PrefsDivider: View {
-    var body: some View { Divider().padding(.leading, 44) }
+    var body: some View { Divider().padding(.leading, 50) }
 }
 
 // MARK: - Settings Snapshot default

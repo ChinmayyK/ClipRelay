@@ -299,6 +299,16 @@ pub enum IpcRequest {
         #[serde(default)]
         ignore_patterns: Option<Vec<String>>,
     },
+
+    // ── Call continuity ───────────────────────────────────────────────────────
+    /// Send a call action (accept/decline) to a ringing Android peer.
+    /// Used by the macOS incoming-call banner.
+    CallAction {
+        /// "accept" or "decline"
+        action: String,
+        /// Target Android device UUID
+        target_device: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -507,12 +517,14 @@ pub mod client {
                         let snap = eng.status_snapshot().await;
                         let fp = eng.local_fingerprint();
                         let pending = eng.pending_remote_clipboards().await.len();
+                        let active_call = eng.active_call().await;
                         IpcResponse::ok(serde_json::json!({
                             "peers": snap.peers,
                             "peer_count": snap.peers.iter().filter(|p| p.status == crate::peer_manager::PeerConnectionState::Connected).count(),
                             "last_sync_at": snap.last_sync_at,
                             "pending_clipboard_count": pending,
                             "local_fingerprint": fp,
+                            "active_call": active_call,
                         }))
                     }
                     IpcRequest::RescanPeers => {
@@ -570,6 +582,16 @@ pub mod client {
                     IpcRequest::Ping => IpcResponse::ok_empty(),
                     IpcRequest::Shutdown => {
                         std::process::exit(0);
+                    }
+                    // ── Call continuity ────────────────────────────────────────────────
+                    IpcRequest::CallAction { action, target_device } => {
+                        match crate::ipc::parse_uuid(&target_device) {
+                            Ok(uuid) => {
+                                eng.send_call_action(action, uuid).await;
+                                IpcResponse::ok_empty()
+                            }
+                            Err(e) => IpcResponse::error(format!("bad target_device: {e}")),
+                        }
                     }
                     // ── Metrics ────────────────────────────────────────────────────────
                     IpcRequest::GetMetrics => {

@@ -4,14 +4,14 @@
 import SwiftUI
 
 private enum QuickAccessSurface {
-    static let chromeTop = Color(hex: 0xFFFFFF, opacity: 0.97)
-    static let chromeBottom = Color(hex: 0xEEF4FF, opacity: 0.98)
-    static let stroke = CRTheme.stroke.opacity(0.78)
-    static let divider = CRTheme.stroke.opacity(0.72)
-    static let card = Color.white.opacity(0.78)
-    static let cardStrong = Color.white.opacity(0.92)
-    static let rowHover = CRTheme.ink.opacity(0.035)
-    static let rowSelected = CRTheme.brandElectric.opacity(0.10)
+    static let chromeTop = Color.white.opacity(0.1)
+    static let chromeBottom = Color.white.opacity(0.05)
+    static let stroke = Color.white.opacity(0.15)
+    static let divider = Color.white.opacity(0.1)
+    static let card = Color.white.opacity(0.15)
+    static let cardStrong = Color.white.opacity(0.2)
+    static let rowHover = Color.white.opacity(0.1)
+    static let rowSelected = CRTheme.brandElectric.opacity(0.15)
 }
 
 // MARK: - Root Panel
@@ -78,14 +78,14 @@ struct QuickAccessHistoryView: View {
             VStack(spacing: 0) {
                 // Search bar
                 QASearchBar(text: $search, focused: $searchFocused)
-                    .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 11)
+                    .padding(.horizontal, 24).padding(.vertical, 16)
 
                 panelSeparator
 
                 // Just-copied strip (only when not searching)
                 if let ctx = store.quickSendContext, !ctx.text.isEmpty, search.isEmpty {
                     QuickSendStrip(store: store, context: ctx)
-                        .padding(.horizontal, 14).padding(.top, 11).padding(.bottom, 2)
+                        .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 4)
                 }
 
                 // Content
@@ -100,7 +100,7 @@ struct QuickAccessHistoryView: View {
                                                  icon: group.label == "PINNED" ? "pin.fill" : "clock",
                                                  tint: group.label == "PINNED"
                                                      ? CRTheme.accentGold
-                                                     : Color(white: 1, opacity: 0.26))
+                                                     : CRTheme.inkSubtle)
                                     ForEach(Array(group.items.enumerated()), id: \.element.id) { _, item in
                                         let globalIdx = flatResults.firstIndex(where: { $0.id == item.id }) ?? 0
                                         QuickRow(
@@ -124,7 +124,7 @@ struct QuickAccessHistoryView: View {
                                     }
                                 }
                             }
-                            .padding(.horizontal, 8).padding(.bottom, 8)
+                            .padding(.horizontal, 12).padding(.bottom, 12)
                         }
                         .onChange(of: selectedIndex) { idx in
                             guard idx < flatResults.count else { return }
@@ -137,13 +137,13 @@ struct QuickAccessHistoryView: View {
                 QAFooter()
             }
         }
-        .frame(width: 500, height: 570)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .frame(width: 580, height: 600)
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .strokeBorder(QuickAccessSurface.stroke, lineWidth: 0.5)
         }
-        .shadow(color: .black.opacity(0.14), radius: 38, x: 0, y: 18)
+        .shadow(color: .black.opacity(0.2), radius: 60, x: 0, y: 30)
         .onAppear { searchFocused = true }
         .onChange(of: search) { _ in selectedIndex = 0; expandedID = nil }
         .background(
@@ -151,7 +151,6 @@ struct QuickAccessHistoryView: View {
                 Button("") { navigate(-1) }.keyboardShortcut(.upArrow,   modifiers: [])
                 Button("") { navigate(+1) }.keyboardShortcut(.downArrow, modifiers: [])
                 Button("") { runSelected() }.keyboardShortcut(.return,   modifiers: [])
-                // Escape: clear search if non-empty, otherwise close panel.
                 Button("") {
                     if !search.isEmpty {
                         search = ""
@@ -159,7 +158,6 @@ struct QuickAccessHistoryView: View {
                         NSApp.keyWindow?.close()
                     }
                 }.keyboardShortcut(.escape, modifiers: [])
-                // ⌘W: close panel.
                 Button("") { NSApp.keyWindow?.close() }
                     .keyboardShortcut("w", modifiers: .command)
             }
@@ -192,42 +190,33 @@ private struct QASearchBar: View {
     var focused: FocusState<Bool>.Binding
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 16) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .medium))
+                .font(.system(size: 22, weight: .light))
                 .foregroundStyle(CRTheme.inkSoft)
-                .frame(width: 18)
+                .frame(width: 24)
 
             TextField("Search clipboard history…", text: $text)
                 .textFieldStyle(.plain)
-                .font(.system(size: 15.5))
+                .font(.system(size: 24, weight: .light))
                 .foregroundStyle(CRTheme.ink)
                 .focused(focused)
 
             if !text.isEmpty {
                 Button { withAnimation(.crFast) { text = "" } } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 15))
+                        .font(.system(size: 18))
                         .foregroundStyle(CRTheme.inkSoft)
                 }
                 .buttonStyle(.plain)
                 .transition(.scale(scale: 0.75).combined(with: .opacity))
             } else {
-                HStack(spacing: 2) {
+                HStack(spacing: 4) {
                     KbdChip("⌘", dark: false)
                     KbdChip("⇧", dark: false)
                     KbdChip("V", dark: false)
                 }
             }
-        }
-        .padding(.horizontal, 13).padding(.vertical, 10)
-        .background {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .fill(QuickAccessSurface.cardStrong)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 11, style: .continuous)
-                        .strokeBorder(QuickAccessSurface.stroke, lineWidth: 0.5)
-                }
         }
         .animation(.crFast, value: text.isEmpty)
     }
@@ -343,44 +332,46 @@ private struct QuickRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Main row
-            HStack(spacing: 10) {
+            HStack(spacing: 14) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(accent.opacity(isSelected ? 0.22 : 0.10))
-                        .frame(width: 30, height: 30)
+                    Circle()
+                        .fill(accent.opacity(isSelected ? 0.3 : 0.15))
+                        .frame(width: 38, height: 38)
                     Image(systemName: item.iconName)
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(accent).symbolRenderingMode(.hierarchical)
                 }
+                .shadow(color: accent.opacity(isSelected ? 0.4 : 0), radius: 8, y: 2)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text(item.title)
-                        .font(.system(size: 12.5, weight: .medium))
+                        .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(CRTheme.ink.opacity(isSelected ? 1.0 : 0.90))
                         .lineLimit(1)
                     HStack(spacing: 4) {
-                        Text(item.typeLabel).foregroundStyle(accent.opacity(0.70))
-                        Text("·").foregroundStyle(CRTheme.inkFaint).font(.system(size: 9))
+                        Text(item.typeLabel).foregroundStyle(accent.opacity(0.80))
+                        Text("·").foregroundStyle(CRTheme.inkFaint).font(.system(size: 10))
                         Text(item.sourceDevice).lineLimit(1).truncationMode(.middle)
-                        Text("·").foregroundStyle(CRTheme.inkFaint).font(.system(size: 9))
+                        Text("·").foregroundStyle(CRTheme.inkFaint).font(.system(size: 10))
                         Text(item.timestamp.relativeTimeString())
                     }
-                    .font(.system(size: 10.5)).foregroundStyle(CRTheme.inkSoft)
+                    .font(.system(size: 11.5)).foregroundStyle(CRTheme.inkSoft)
                 }
 
                 Spacer(minLength: 0)
 
                 // Right actions — visible on select/hover
                 if isSelected || hovered {
-                    HStack(spacing: 5) {
-                        // Expand preview (text items only)
+                    HStack(spacing: 8) {
                         if item.fullText != nil {
                             Button {
                                 onExpand()
                             } label: {
                                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                    .font(.system(size: 10, weight: .medium))
+                                    .font(.system(size: 12, weight: .bold))
                                     .foregroundStyle(CRTheme.inkSubtle)
+                                    .padding(8)
+                                    .background(Circle().fill(Color.white.opacity(0.1)))
                             }
                             .buttonStyle(.plain)
                         }
@@ -391,19 +382,19 @@ private struct QuickRow: View {
 
                 if item.pinned && !(isSelected || hovered) {
                     Image(systemName: "pin.fill")
-                        .font(.system(size: 9))
-                        .foregroundStyle(CRTheme.accentGold.opacity(0.70))
+                        .font(.system(size: 12))
+                        .foregroundStyle(CRTheme.accentGold.opacity(0.80))
                         .rotationEffect(.degrees(45))
                 }
             }
-            .padding(.horizontal, 10).padding(.vertical, 7)
+            .padding(.horizontal, 14).padding(.vertical, 10)
 
             // Expanded preview
             if isExpanded, let preview = item.fullText, !preview.isEmpty {
                 Text(preview)
-                    .font(.system(size: 10.5, design: .monospaced))
-                    .foregroundStyle(CRTheme.ink.opacity(0.82))
-                    .padding(.horizontal, 10).padding(.bottom, 9)
+                    .font(.system(size: 12.5, design: .monospaced))
+                    .foregroundStyle(CRTheme.ink.opacity(0.88))
+                    .padding(.horizontal, 14).padding(.bottom, 12)
                     .fixedSize(horizontal: false, vertical: true)
                     .lineLimit(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -411,16 +402,11 @@ private struct QuickRow: View {
             }
         }
         .background {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(isSelected ? QuickAccessSurface.rowSelected : (hovered ? QuickAccessSurface.rowHover : .clear))
-                .overlay {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(CRTheme.brandElectric.opacity(0.18), lineWidth: 0.5)
-                    }
-                }
         }
-        .contentShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .padding(.horizontal, 4).padding(.vertical, 2)
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         .onTapGesture { onTap() }
         .onHover { hovered = $0 }
         .animation(.crFast, value: isSelected)

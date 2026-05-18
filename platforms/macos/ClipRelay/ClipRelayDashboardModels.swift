@@ -7,45 +7,50 @@ import SwiftUI
 // MARK: - Dashboard Navigation
 
 enum DashboardSection: String, CaseIterable, Identifiable {
-    case timeline, devices, trust, settings
+    case dashboard, history, devices, workflows, settings
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .timeline: return "Timeline"
-        case .devices:  return "Devices"
-        case .trust:    return "Trust"
+        case .dashboard: return "Dashboard"
+        case .history:   return "Clipboard History"
+        case .devices:  return "Synced Devices"
+        case .workflows: return "Workflows"
         case .settings: return "Settings"
         }
     }
 
     var icon: String {
         switch self {
-        case .timeline: return "clock.arrow.circlepath"
-        case .devices:  return "desktopcomputer"
-        case .trust:    return "checkmark.shield.fill"
-        case .settings: return "slider.horizontal.3"
+        case .dashboard: return "house"
+        case .history:   return "doc.text"
+        case .devices:  return "arrow.triangle.2.circlepath"
+        case .workflows: return "square.grid.2x2"
+        case .settings: return "gearshape"
         }
     }
 
     var eyebrow: String {
         switch self {
-        case .timeline: return "Activity"
+        case .dashboard: return "Overview"
+        case .history:   return "Activity"
         case .devices:  return "Network"
-        case .trust:    return "Security"
+        case .workflows: return "Automation"
         case .settings: return "Configuration"
         }
     }
 
     var subtitle: String {
         switch self {
-        case .timeline:
+        case .dashboard:
+            return "Modern clipboard sync and continuity manager."
+        case .history:
             return "All clipboard activity across your devices, in order."
         case .devices:
             return "Discover, connect, and manage nearby peers."
-        case .trust:
-            return "Approve or reject devices requesting access."
+        case .workflows:
+            return "Custom actions and automations for incoming clipboards."
         case .settings:
             return "Tune sync behaviour, filters, and network settings."
         }

@@ -38,7 +38,7 @@ final class ClipRelayStore: ObservableObject {
     @Published var clipboardPolicy = ClipboardPolicy()
 
     // ── Dashboard UI state ────────────────────────────────────────────────────
-    @Published var selectedSection: DashboardSection = .timeline
+    @Published var selectedSection: DashboardSection = .dashboard
     @Published var toasts: [ToastItem] = []
     @Published var manualConnectAddress: String = ""
     @Published var settings: ClipRelaySettingsSnapshot? = nil
@@ -46,6 +46,8 @@ final class ClipRelayStore: ObservableObject {
     @Published var pendingTrustRequest: DeviceDetailSnapshot? = nil
     @Published var dashboardStatus: StatusSnapshot? = nil
     @Published var pinnedItemIds: Set<Int64> = []
+    /// Active phone call from a connected Android device (nil = no active call).
+    @Published var activeCall: IncomingCallState? = nil
 
     private var lastActivityId: Int64 = 0
     private var lastMirroredAutoAppliedEntryId: Int64 = 0
@@ -202,6 +204,19 @@ final class ClipRelayStore: ObservableObject {
             peers = s.peers.map { makePeerViewModel($0) }
             pendingClipboardCount = s.pending_clipboard_count ?? 0
             if let fp = s.local_fingerprint { localFingerprint = fp }
+
+            // ── Call continuity: update active call state ─────────────────────
+            if let call = s.active_call, call.state.lowercased() != "idle" {
+                activeCall = IncomingCallState(
+                    deviceId: call.device_id,
+                    deviceName: call.device_name,
+                    state: call.state,
+                    phoneNumber: call.number,
+                    contactName: call.contact_name
+                )
+            } else {
+                activeCall = nil
+            }
             dashboardStatus = StatusSnapshot(
                 peerCount:    connectedCount,
                 trustedCount: s.peers.filter { $0.trusted }.count,
@@ -627,9 +642,9 @@ final class ClipRelayStore: ObservableObject {
 
     func performCommand(_ command: String) {
         let cmd = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        if cmd.hasPrefix("/history") || cmd.hasPrefix("/timeline") { selectedSection = .timeline }
+        if cmd.hasPrefix("/history") || cmd.hasPrefix("/timeline") { selectedSection = .history }
         else if cmd.hasPrefix("/devices") { selectedSection = .devices }
-        else if cmd.hasPrefix("/trust")   { selectedSection = .trust }
+        else if cmd.hasPrefix("/trust")   { selectedSection = .workflows }
         else if cmd.hasPrefix("/settings") || cmd.hasPrefix("/prefs") { selectedSection = .settings }
         else if cmd.hasPrefix("/connect ") {
             manualConnectAddress = String(command.dropFirst(9))
@@ -709,6 +724,25 @@ final class ClipRelayStore: ObservableObject {
         withAnimation(.spring(response: 0.45, dampingFraction: 0.82, blendDuration: 0.1)) {
             toasts.removeAll { $0.id == id }
         }
+    }
+
+    // MARK: - Call Continuity
+
+    func acceptCall() {
+        guard let call = activeCall else { return }
+        Task {
+            try? await ipc.callAction(action: "accept", targetDevice: call.deviceId)
+        }
+        // Optimistically clear — the next poll will confirm.
+        withAnimation(.crSpring) { activeCall = nil }
+    }
+
+    func declineCall() {
+        guard let call = activeCall else { return }
+        Task {
+            try? await ipc.callAction(action: "decline", targetDevice: call.deviceId)
+        }
+        withAnimation(.crSpring) { activeCall = nil }
     }
 
     // MARK: - Mapping

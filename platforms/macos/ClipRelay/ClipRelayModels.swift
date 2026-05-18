@@ -174,3 +174,23 @@ struct ClipboardPolicy {
     var autoApply: Bool = false          // default: manual apply
     var autoApplyDebounceMs: Int = 500
 }
+
+// ── Call continuity ──────────────────────────────────────────────────────────
+
+/// Active phone call state propagated from a connected Android device.
+/// Used by the incoming-call banner overlay on macOS.
+struct IncomingCallState: Equatable {
+    let deviceId: String
+    let deviceName: String
+    /// "ringing", "offhook", "idle"
+    let state: String
+    let phoneNumber: String
+    let contactName: String
+
+    /// Human-friendly display: contact name if available, otherwise phone number.
+    var displayName: String {
+        contactName.isEmpty ? (phoneNumber.isEmpty ? "Unknown Caller" : phoneNumber) : contactName
+    }
+
+    var isRinging: Bool { state.lowercased() == "ringing" }
+}

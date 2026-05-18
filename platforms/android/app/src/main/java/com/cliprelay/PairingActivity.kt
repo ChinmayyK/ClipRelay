@@ -484,11 +484,36 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        contentHost = buildContent()
         setContentView(ScrollView(this).apply {
             setBackgroundColor(cr(R.color.cr_bg))
-            addView(buildContent())
+            addView(contentHost)
         })
+        configureEdgeToEdge()
     }
+
+    private lateinit var contentHost: LinearLayout
+
+    private fun configureEdgeToEdge() {
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+
+        val rootChrome = findViewById<android.view.View>(android.R.id.content)
+        val isDark = (resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) == android.content.res.Configuration.UI_MODE_NIGHT_YES
+        androidx.core.view.WindowInsetsControllerCompat(window, rootChrome).apply {
+            isAppearanceLightStatusBars = !isDark
+            isAppearanceLightNavigationBars = !isDark
+        }
+
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(rootChrome) { _, insets ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            contentHost.setPadding(0, bars.top, 0, bars.bottom)
+            insets
+        }
+        androidx.core.view.ViewCompat.requestApplyInsets(rootChrome)
+    }
+
 
     private fun buildContent(): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -547,6 +572,10 @@ class SettingsActivity : AppCompatActivity() {
             addView(buildIdentitySection())
             addView(vSpace(14))
 
+            // Appearance
+            addView(buildAppearanceSection())
+            addView(vSpace(14))
+
             // Sync
             addView(buildSyncSection())
             addView(vSpace(14))
@@ -571,41 +600,65 @@ class SettingsActivity : AppCompatActivity() {
     // ── Identity ──────────────────────────────────────────────────────────────
 
     private fun buildIdentitySection(): LinearLayout = section("This device") {
-        // Current name display
         addView(LinearLayout(this@SettingsActivity).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity     = Gravity.CENTER_VERTICAL
-            setPadding(0, dp(4), 0, dp(14))
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(4), 0, dp(4))
 
             addView(LinearLayout(this@SettingsActivity).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0,
-                    LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                addView(TextView(this@SettingsActivity).apply {
-                    text = "Device name"
-                    textSize = 14.5f
-                    setTypeface(Typeface.create("sans-serif", Typeface.NORMAL))
-                    setTextColor(cr(R.color.cr_text_1))
-                })
-                addView(vSpace(2))
+                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                
                 addView(TextView(this@SettingsActivity).apply {
                     text = resolvedName()
-                    textSize = 13f
-                    setTextColor(cr(R.color.cr_accent))
+                    textSize = 16f
                     setTypeface(Typeface.create("sans-serif-medium", Typeface.NORMAL))
+                    setTextColor(cr(R.color.cr_text_1))
+                })
+                
+                addView(TextView(this@SettingsActivity).apply {
+                    text = "ID: " + (prefs().getString("device_id", "—")?.take(8) ?: "—")
+                    textSize = 12f
+                    setTypeface(Typeface.MONOSPACE, Typeface.NORMAL)
+                    setTextColor(cr(R.color.cr_text_3))
                 })
             })
 
             addView(ghostButton("Edit") { showRenameDialog() })
         })
+    }
 
-        addView(rowDivider())
+    // ── Appearance ────────────────────────────────────────────────────────────
 
-        addView(infoRow(
-            label = "Device ID",
-            value = prefs().getString("device_id", "—") ?: "—",
-            mono  = true
-        ))
+    private fun buildAppearanceSection(): LinearLayout = section("Appearance") {
+        val current = prefs().getInt("theme_mode", androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO)
+
+        fun updateTheme(mode: Int) {
+            prefs().edit().putInt("theme_mode", mode).apply()
+            androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(mode)
+            recreate()
+        }
+
+        addView(modeCard(
+            key = "light",
+            title = "Light",
+            desc  = "Classic clean look.",
+            selected = current == androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO
+        ) { updateTheme(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO) })
+        addView(vSpace(8))
+        addView(modeCard(
+            key = "dark",
+            title = "True Black",
+            desc  = "Deep black for OLED displays.",
+            selected = current == androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES
+        ) { updateTheme(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES) })
+        addView(vSpace(8))
+        addView(modeCard(
+            key = "system",
+            title = "System Default",
+            desc  = "Follow system settings.",
+            selected = current == androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM
+        ) { updateTheme(androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_FOLLOW_SYSTEM) })
     }
 
     // ── Sync ─────────────────────────────────────────────────────────────────

@@ -122,36 +122,38 @@ private struct ToastOverlayCard: View {
     let toast: ToastItem
     let onDismiss: () -> Void
 
-    private let cardBackground = Color(hex: 0xF7F1E8, opacity: 0.98)
-    private let cardBorder = Color(hex: 0xDDD3C7, opacity: 0.96)
-    private let titleColor = Color(hex: 0x1C1916)
-    private let bodyColor = Color(hex: 0x5B554D)
+    private let titleColor = Color.primary
+    private let bodyColor = Color.secondary
+
+    @Environment(\.colorScheme) var colorScheme
+    @State private var hovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(toast.tint.opacity(0.14))
-                        .frame(width: 42, height: 42)
+                    Circle()
+                        .fill(toast.tint.opacity(0.15))
+                        .frame(width: 44, height: 44)
                     Image(systemName: toast.systemImage)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 16, weight: .bold))
                         .foregroundStyle(toast.tint)
                         .symbolRenderingMode(.hierarchical)
                 }
+                .shadow(color: toast.tint.opacity(0.3), radius: 8, y: 2)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(toast.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(titleColor)
                     Text(toast.body)
-                        .font(.system(size: 12.5, weight: .regular))
+                        .font(.system(size: 13, weight: .medium))
                         .foregroundStyle(bodyColor)
                         .lineSpacing(2)
                         .fixedSize(horizontal: false, vertical: true)
                     if let detail = toast.detail, !detail.isEmpty {
                         Text(detail)
-                            .font(.system(size: 11.5, weight: .medium))
+                            .font(.system(size: 11.5, weight: .semibold))
                             .foregroundStyle(bodyColor.opacity(0.72))
                     }
                 }
@@ -159,21 +161,26 @@ private struct ToastOverlayCard: View {
                 Spacer(minLength: 0)
 
                 Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundStyle(bodyColor.opacity(0.68))
-                        .frame(width: 24, height: 24)
+                    ZStack {
+                        Circle().fill(Color.white.opacity(0.1)).frame(width: 26, height: 26)
+                        Image(systemName: "xmark")
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundStyle(bodyColor.opacity(0.8))
+                    }
                 }
                 .buttonStyle(.plain)
+                .opacity(hovered ? 1 : 0)
+                .animation(.crFast, value: hovered)
             }
 
             if let progress = toast.progress {
                 VStack(alignment: .leading, spacing: 6) {
-                    CRProgressBar(value: progress, tint: toast.tint, height: 4)
+                    CRProgressBar(value: progress, tint: toast.tint, height: 6)
                     Text("\(Int(progress * 100))% complete")
-                        .font(.system(size: 11))
-                        .foregroundStyle(bodyColor.opacity(0.78))
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(bodyColor.opacity(0.8))
                 }
+                .padding(.top, 4)
             }
 
             if toast.primaryAction != nil || toast.secondaryAction != nil {
@@ -186,36 +193,44 @@ private struct ToastOverlayCard: View {
                         ToastOverlayButton(action: primary)
                     }
                 }
+                .padding(.top, 4)
             }
         }
-        .padding(14)
-        .frame(maxWidth: 344, alignment: .leading)
+        .padding(18)
+        .frame(maxWidth: 360, alignment: .leading)
         .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(cardBackground)
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(colorScheme == .dark ? Color.black.opacity(0.4) : Color.white.opacity(0.6))
+                .background(CRHUDMaterial().clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous)))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .strokeBorder(cardBorder, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .strokeBorder(colorScheme == .dark ? Color.white.opacity(0.15) : Color.black.opacity(0.1), lineWidth: 0.5)
                 }
+                .shadow(color: Color.black.opacity(0.2), radius: 24, y: 12)
         }
+        .scaleEffect(hovered ? 1.02 : 1.0)
+        .onHover { hovered = $0 }
+        .animation(.crSpring, value: hovered)
     }
 }
 
 private struct ToastOverlayButton: View {
     let action: ToastAction
 
+    @Environment(\.colorScheme) var colorScheme
+
     private var fill: Color {
         switch action.role {
-        case .primary: return Color(hex: 0x2B2A28)
-        case .secondary: return Color(hex: 0xEEE5D8)
-        case .positive: return Color(hex: 0x355F4F)
-        case .destructive: return Color(hex: 0x7D433F)
+        case .primary: return Color.accentColor
+        case .secondary: return Color.clear // Handled by background material
+        case .positive: return Color(hex: 0x30D158)
+        case .destructive: return Color.red
         }
     }
 
     private var foreground: Color {
         switch action.role {
-        case .secondary: return Color(hex: 0x2B2A28)
+        case .secondary: return Color.primary
         default: return .white
         }
     }
@@ -225,16 +240,27 @@ private struct ToastOverlayButton: View {
             .buttonStyle(.plain)
             .font(.system(size: 11.5, weight: .semibold))
             .foregroundStyle(foreground)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 14)
             .padding(.vertical, 8)
             .background {
                 Capsule()
-                    .fill(fill)
-                    .overlay {
+                    .fill(action.role == .secondary ? Color.clear : fill)
+                    .background {
                         if action.role == .secondary {
-                            Capsule().strokeBorder(Color(hex: 0xD5CCBE), lineWidth: 1)
+                            Capsule().fill(.ultraThinMaterial)
+                                .overlay {
+                                    Capsule().fill(colorScheme == .dark ? Color.white.opacity(0.1) : Color.black.opacity(0.05))
+                                }
                         }
                     }
+                    .overlay {
+                        if action.role == .secondary {
+                            Capsule().strokeBorder(colorScheme == .dark ? Color.white.opacity(0.2) : Color.black.opacity(0.15), lineWidth: 0.5)
+                        } else {
+                            Capsule().strokeBorder(Color.white.opacity(0.2), lineWidth: 0.5)
+                        }
+                    }
+                    .shadow(color: action.role != .secondary ? fill.opacity(0.3) : Color.clear, radius: 4, y: 2)
             }
     }
 }

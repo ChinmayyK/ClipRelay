@@ -288,6 +288,28 @@ pub enum AppMessage {
         transfer_id: [u8; 16],
         reason: String,
     },
+    /// Phone call state propagated from an Android device to connected peers.
+    /// Enables call continuity: ringing/offhook/idle states are relayed so
+    /// macOS (or other peers) can show an incoming-call banner and trigger
+    /// remote accept/decline actions.
+    CallStateUpdate {
+        /// "ringing", "offhook", "idle"
+        state: String,
+        /// Phone number (may be empty if blocked/unknown)
+        number: String,
+        /// Contact name resolved on Android (empty if not in contacts)
+        contact_name: String,
+        /// Device that originated this event
+        origin_device: Uuid,
+        origin_device_name: String,
+    },
+    /// Remote call action request (accept/decline) sent from a peer
+    /// back to the Android device that reported a ringing call.
+    CallAction {
+        /// "accept" or "decline"
+        action: String,
+        origin_device: Uuid,
+    },
     Ping {
         timestamp_ms: u64,
     },
